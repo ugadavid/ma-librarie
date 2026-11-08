@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import stat
@@ -15,6 +16,10 @@ from .windows import SourceProblem, is_reparse, locate, verify
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS extension_filters (
+    collection_id INTEGER PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
+    extensions TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS roots (
     id INTEGER PRIMARY KEY,
@@ -237,6 +242,25 @@ class Catalogue:
                 (collection,),
             )]
 
+    def extension_filter(self, collection):
+        """None matches every format, while an empty set matches no files."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT extensions FROM extension_filters WHERE collection_id = ?", (collection,)
+            ).fetchone()
+            return frozenset(json.loads(row["extensions"])) if row else None
+
+    def set_extension_filter(self, collection, extensions):
+        with self.connect() as db:
+            if extensions is None:
+                db.execute("DELETE FROM extension_filters WHERE collection_id = ?", (collection,))
+            else:
+                db.execute(
+                    """INSERT INTO extension_filters (collection_id, extensions) VALUES (?, ?)
+                       ON CONFLICT (collection_id) DO UPDATE SET extensions = excluded.extensions""",
+                    (collection, json.dumps(sorted(set(extensions)))),
+                )
+
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
                limit=200, offset=0):
         terms = query.casefold().split()
@@ -246,8 +270,12 @@ class Catalogue:
         ]
         args = [collection, *terms]
         if extension is not None:
-            filters.append("extension = ?")
-            args.append(extension)
+            selected = (extension,) if isinstance(extension, str) else tuple(extension)
+            if not selected:
+                return []
+            placeholders = ", ".join("?" for _ in selected)
+            filters.append(f"extension IN ({placeholders})")
+            args.extend(selected)
         if scope:
             root_id, directory = scope
             filters.append("root_id = ?")

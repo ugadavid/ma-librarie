@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from catalogue import store
-from catalogue.ui import App
+from catalogue.ui import App, EXTENSION_PRESETS
 from catalogue.windows import Location, SourceProblem, explorer_target, locate
 
 
@@ -235,6 +235,83 @@ class CatalogueTests(unittest.TestCase):
                              self.db.directories(self.root_id, "")])
         finally:
             junction.rmdir()
+
+    def test_extension_filter_upgrades_existing_catalogue(self):
+        self.db.synchronize(self.collection)
+        with self.db.connect() as legacy:
+            legacy.execute("DROP TABLE extension_filters")
+        upgraded = store.Catalogue(self.filename)
+        self.assertIsNone(upgraded.extension_filter(self.collection))
+        self.assertEqual(4, len(upgraded.search(self.collection)))
+        formats = EXTENSION_PRESETS["Livres"]
+        upgraded.set_extension_filter(self.collection, formats)
+        self.assertEqual(formats, store.Catalogue(self.filename).extension_filter(self.collection))
+        self.assertEqual(3, len(upgraded.search(self.collection, extension=formats)))
+        self.assertEqual(4, len(upgraded.search(self.collection)))
+        upgraded.set_extension_filter(self.collection, frozenset())
+        self.assertEqual([], upgraded.search(self.collection, extension=upgraded.extension_filter(
+            self.collection)))
+        upgraded.set_extension_filter(self.collection, None)
+        self.assertIsNone(upgraded.extension_filter(self.collection))
+
+    def test_extensions_filter_before_sort_and_pagination(self):
+        (self.nested / "Couverture.jpg").write_bytes(b"x" * 500)
+        (self.nested / "Texte.mobi").write_bytes(b"x" * 300)
+        (self.nested / "Texte.pdf").write_bytes(b"x" * 400)
+        (self.nested / "Fichier").touch()
+        self.db.synchronize(self.collection)
+        scope = (self.root_id, self.nested.name)
+        criteria = dict(query="éditions", extension={"pdf", "mobi", ""}, sort="Taille", scope=scope,
+                        limit=1)
+        self.assertEqual(["Texte.pdf", "Texte.mobi", "Fichier"], [
+            self.db.search(self.collection, offset=offset, **criteria)[0]["name"]
+            for offset in range(3)
+        ])
+        self.assertEqual([], self.db.search(self.collection, offset=3, **criteria))
+
+    def test_ui_filter_preserves_query_and_scope_and_restores_collections(self):
+        movies = self.db.create_collection("Autre collection")
+        self.db.add_root(movies, self.films)
+        (self.nested / "Couverture.jpg").touch()
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.withdraw()
+        app = App(window, self.db)
+
+        app.load_collections(movies)
+        self.assertIsNone(app.selected_extensions)
+        app.apply_extensions(movies, EXTENSION_PRESETS["Films"])
+        self.assertFalse(app.rows)
+        self.db.synchronize(movies)
+        app.load_roots()
+        self.assertEqual(["Court métrage.mkv"], [row["name"] for row in app.rows.values()])
+
+        self.db.synchronize(self.collection)
+        app.load_collections(self.collection)
+        root = next(node for node, scope in app.nodes.items() if scope == (self.root_id, ""))
+        app.load_children(root)
+        branch, = app.tree.get_children(root)
+        app.tree.selection_set(branch)
+        app.select_scope()
+        app.query.set("ÉDITIONS")
+        app.refresh_results()
+        self.assertEqual({"Ubik.epub", "Couverture.jpg"}, {row["name"] for row in app.rows.values()})
+        app.page = 3
+        app.apply_extensions(self.collection, frozenset({"epub", "azw3"}))
+        self.assertEqual(0, app.page)
+        self.assertEqual("ÉDITIONS", app.query.get())
+        self.assertEqual((self.root_id, self.nested.name), app.scope)
+        self.assertEqual(["Ubik.epub"], [row["name"] for row in app.rows.values()])
+        app.load_collections(movies)
+        self.assertEqual(EXTENSION_PRESETS["Films"], app.selected_extensions)
+        app.load_collections(self.collection)
+        self.assertEqual(frozenset({"epub", "azw3"}), app.selected_extensions)
+        app.destroy()
+
+        reopened = App(window, store.Catalogue(self.filename))
+        self.assertEqual(EXTENSION_PRESETS["Films"], reopened.selected_extensions)
+        reopened.load_collections(self.collection)
+        self.assertEqual(frozenset({"epub", "azw3"}), reopened.selected_extensions)
 
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()

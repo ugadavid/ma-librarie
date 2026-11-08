@@ -21,7 +21,10 @@ STATES = {
     "missing": "Absent",
 }
 ALL_EXTENSIONS = "Toutes les extensions"
-NO_EXTENSION = "(Sans extension)"
+EXTENSION_PRESETS = {
+    "Livres": frozenset(("epub", "mobi", "pdf", "azw", "azw3")),
+    "Films": frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm")),
+}
 PAGE_SIZE = 200
 
 
@@ -32,6 +35,88 @@ def date_label(nanoseconds):
     except (OSError, OverflowError, ValueError):
         utc = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=seconds)
         return utc.strftime("%d/%m/%Y %H:%M:%S UTC")
+
+
+def extension_label(extension):
+    return f".{extension.upper()}" if extension else "Sans extension"
+
+
+class ExtensionDialog(tk.Toplevel):
+    def __init__(self, parent, available, selected, apply_filter):
+        super().__init__(parent)
+        self.withdraw()
+        self.title("Extensions")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.apply_filter = apply_filter
+        self.formats = sorted(set(available) | set(selected or ()) | {""} |
+                              set().union(*EXTENSION_PRESETS.values()))
+
+        panel = ttk.Frame(self, padding=12)
+        panel.pack(fill="both", expand=True)
+        self.all_formats = tk.BooleanVar(self, value=selected is None)
+        ttk.Checkbutton(
+            panel, text=ALL_EXTENSIONS, variable=self.all_formats, command=self.update_list
+        ).pack(anchor="w")
+
+        presets = ttk.Frame(panel)
+        presets.pack(fill="x", pady=8)
+        ttk.Label(presets, text="Préréglages").pack(side="left")
+        for name, formats in EXTENSION_PRESETS.items():
+            ttk.Button(presets, text=name, command=lambda choice=formats: self.preset(choice)).pack(
+                side="left", padx=(6, 0)
+            )
+
+        ttk.Label(panel, text="Cliquez sur les formats à afficher.").pack(anchor="w")
+        choices = ttk.Frame(panel)
+        choices.pack(fill="both", expand=True, pady=(4, 8))
+        self.options = tk.Listbox(choices, selectmode="multiple", exportselection=False, height=11)
+        scroll = ttk.Scrollbar(choices, command=self.options.yview)
+        self.options.configure(yscrollcommand=scroll.set)
+        self.options.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.options.insert("end", *(extension_label(ext) for ext in self.formats))
+        self.select_formats(selected or ())
+        self.update_list()
+
+        actions = ttk.Frame(panel)
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Appliquer", command=self.apply).pack(side="right")
+        ttk.Button(actions, text="Annuler", command=self.destroy).pack(side="right", padx=6)
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_reqwidth()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_reqheight()) // 2
+        self.geometry(f"{x:+d}{y:+d}")
+        self.deiconify()
+        self.wait_visibility()
+        self.grab_set()
+
+    def select_formats(self, formats):
+        self.options.selection_clear(0, "end")
+        for index, extension in enumerate(self.formats):
+            if extension in formats:
+                self.options.selection_set(index)
+
+    def update_list(self):
+        self.options.configure(state="disabled" if self.all_formats.get() else "normal")
+
+    def preset(self, formats):
+        self.all_formats.set(False)
+        self.update_list()
+        self.select_formats(formats)
+        self.options.focus_set()
+
+    def apply(self):
+        selected = None if self.all_formats.get() else frozenset(
+            self.formats[index] for index in self.options.curselection()
+        )
+        try:
+            self.apply_filter(selected)
+        except sqlite3.Error as exc:
+            messagebox.showerror("Extensions", str(exc), parent=self)
+        else:
+            self.destroy()
 
 
 class App(ttk.Frame):
@@ -48,6 +133,7 @@ class App(ttk.Frame):
         self.errors = []
         self.page = 0
         self.pending_search = None
+        self.selected_extensions = None
         self.scope = None
         self.pack(fill="both", expand=True)
         self.build()
@@ -76,9 +162,8 @@ class App(ttk.Frame):
         self.search_entry = ttk.Entry(search_bar, textvariable=self.query)
         self.search_entry.pack(side="left", fill="x", expand=True, padx=6)
         self.query.trace_add("write", self.schedule_search)
-        self.extension = ttk.Combobox(search_bar, state="readonly", width=22)
-        self.extension.pack(side="left", padx=(0, 6))
-        self.extension.bind("<<ComboboxSelected>>", lambda event: self.refresh_results())
+        self.extension_button = ttk.Button(search_bar, command=self.edit_extensions)
+        self.extension_button.pack(side="left", padx=(0, 6))
         self.sort = ttk.Combobox(search_bar, state="readonly", width=19, values=list(SORTS))
         self.sort.current(0)
         self.sort.pack(side="left")
@@ -194,16 +279,37 @@ class App(ttk.Frame):
                 chosen = match
         self.tree.selection_set(chosen)
         self.tree.see(chosen)
-        self.update_extensions(collection)
+        self.selected_extensions = self.catalogue.extension_filter(collection)
+        self.update_extension_label()
         self.select_scope()
 
-    def update_extensions(self, collection):
-        previous = self.extension.get()
-        values = [ALL_EXTENSIONS, *(
-            f".{ext}" if ext else NO_EXTENSION for ext in self.catalogue.extensions(collection)
-        )]
-        self.extension.configure(values=values)
-        self.extension.current(values.index(previous) if previous in values else 0)
+    def update_extension_label(self):
+        selected = self.selected_extensions
+        if selected is None:
+            label = ALL_EXTENSIONS
+        elif not selected:
+            label = "Aucune extension"
+        else:
+            label = next((name for name, formats in EXTENSION_PRESETS.items() if selected == formats),
+                         None)
+            if label is None:
+                label = (extension_label(next(iter(selected))) if len(selected) == 1
+                         else f"{len(selected)} extensions")
+        self.extension_button.configure(text=f"Extensions · {label}")
+
+    def edit_extensions(self):
+        collection = self.collection_id()
+        if collection is not None:
+            ExtensionDialog(
+                self.window, self.catalogue.extensions(collection), self.selected_extensions,
+                lambda selected: self.apply_extensions(collection, selected)
+            )
+
+    def apply_extensions(self, collection, selected):
+        self.catalogue.set_extension_filter(collection, selected)
+        self.selected_extensions = selected
+        self.update_extension_label()
+        self.refresh_results()
 
     def load_children(self, node):
         if node not in self.nodes:
@@ -250,17 +356,10 @@ class App(ttk.Frame):
             self.pending_search = None
         if reset:
             self.page = 0
-        extension = self.extension.get()
-        if extension == ALL_EXTENSIONS:
-            extension = None
-        elif extension == NO_EXTENSION:
-            extension = ""
-        else:
-            extension = extension.removeprefix(".")
         self.table.delete(*self.table.get_children())
         self.rows.clear()
         rows = self.catalogue.search(
-            self.collection_id(), self.query.get(), extension, self.sort.get(),
+            self.collection_id(), self.query.get(), self.selected_extensions, self.sort.get(),
             self.scope, PAGE_SIZE + 1, self.page * PAGE_SIZE
         )
         for row in rows[:PAGE_SIZE]:
@@ -303,6 +402,7 @@ class App(ttk.Frame):
         active = not self.scanning
         self.collection_box.configure(state="readonly" if active else "disabled")
         self.new_button.configure(state="normal" if active else "disabled")
+        self.extension_button.configure(state="normal" if self.collection_id() else "disabled")
         self.add_button.configure(state="normal" if active and self.collection_id() else "disabled")
         self.sync_button.configure(state="normal" if active and self.roots else "disabled")
         self.relocate_button.configure(

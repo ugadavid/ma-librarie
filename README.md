@@ -22,6 +22,12 @@ Python, Tkinter et SQLite couvrent l’interface, l’accès aux dossiers Window
 
 La première détection correspond à la date de catalogage. Le scan lit les sources et ignore les points de réanalyse, dont les jonctions, les liens symboliques et certains fichiers à la demande. Les métadonnées intégrées sont lues pour les EPUB. Les sources sont des dossiers sur des volumes locaux identifiables par Windows.
 
+## Filtrer par extensions
+
+Ouvrez **Extensions**, puis choisissez **Livres** (EPUB, MOBI, PDF, AZW, AZW3), **Films** (MP4, MKV, AVI, MOV, M4V, WMV, WEBM) ou composez votre sélection dans la liste. Vous pouvez modifier un préréglage et inclure les fichiers **Sans extension**. Cliquez sur **Appliquer** pour actualiser les résultats.
+
+Le choix est mémorisé par collection et disponible avant le premier inventaire. La recherche et la branche courante sont conservées, et la liste revient à la première page. **Toutes les extensions** réaffiche les fichiers auxiliaires déjà inventoriés sans synchronisation.
+
 ## Tests
 
 Exécutez la suite dans une session Windows de bureau avec Tkinter.
@@ -30,4 +36,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md)
