@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -312,6 +313,224 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(EXTENSION_PRESETS["Films"], reopened.selected_extensions)
         reopened.load_collections(self.collection)
         self.assertEqual(frozenset({"epub", "azw3"}), reopened.selected_extensions)
+
+    def test_existing_catalogue_does_not_reuse_removed_ids(self):
+        with self.db.connect() as db:
+            db.execute("DROP TABLE catalogue_ids")
+        upgraded = store.Catalogue(self.filename)
+        old_root = upgraded.roots(self.collection)[-1]["id"]
+        upgraded.remove_root(self.collection, old_root)
+        new_root = upgraded.add_root(self.collection, self.other)
+        self.assertGreater(new_root, old_root)
+        with self.assertRaisesRegex(ValueError, "n’existe plus"):
+            upgraded.remove_root(self.collection, old_root)
+
+        upgraded.delete_collection(self.collection)
+        recreated = upgraded.create_collection("Livres")
+        self.assertGreater(recreated, self.collection)
+        with self.assertRaisesRegex(ValueError, "n’existe plus"):
+            upgraded.delete_collection(self.collection)
+        self.assertEqual(recreated, upgraded.collections()[0]["id"])
+
+    def test_remove_offline_root_preserves_unscanned_coverage(self):
+        # The parent was recorded after the nested root's successful inventory.
+        collection = self.db.create_collection("Romans")
+        nested_id = self.db.add_root(collection, self.nested)
+        self.db.synchronize(collection)
+        book, = self.db.search(collection)
+        parent_id = self.db.add_root(collection, self.books)
+        shared = self.db.create_collection("Autre inventaire")
+        self.db.add_root(shared, self.nested)
+        self.db.synchronize(shared)
+        self.nested.rename(self.books / "Hors ligne")
+        with self.db.connect() as db:
+            db.execute("UPDATE roots SET state = 'offline' WHERE id = ?", (nested_id,))
+            db.execute(
+                f"""CREATE TRIGGER reject_removal BEFORE DELETE ON roots
+                    WHEN OLD.id = {nested_id}
+                    BEGIN SELECT RAISE(ABORT, 'rollback témoin'); END"""
+            )
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "rollback témoin"):
+            self.db.remove_root(collection, nested_id)
+        self.assertFalse(self.db.search(collection, scope=(parent_id, "")))
+        with self.db.connect() as db:
+            db.execute("DROP TRIGGER reject_removal")
+
+        self.db.remove_root(collection, nested_id)
+        branch, = self.db.directories(parent_id, "")
+        retained, = self.db.search(collection, scope=(parent_id, branch["relative"]))
+        self.assertEqual(book["full_path"], retained["full_path"])
+        self.assertEqual(book["detected"], retained["detected"])
+        self.assertEqual("Ubik.epub", self.db.search(shared)[0]["name"])
+        self.assertTrue((self.books / "Hors ligne" / "Ubik.epub").is_file())
+
+    def test_remove_parent_keeps_earliest_detection_on_existing_overlap(self):
+        self.db.synchronize(self.collection)
+        first, = self.db.search(self.collection, "Ubik")
+        child_id = self.db.add_root(self.collection, self.nested)
+        self.db.synchronize(self.collection)
+        self.db.remove_root(self.collection, self.root_id)
+        retained, = self.db.search(self.collection, "Ubik")
+        self.assertEqual(child_id, retained["root_id"])
+        self.assertEqual(first["detected"], retained["detected"])
+        self.assertFalse(self.db.search(self.collection, "Guide"))
+
+    def test_structural_mutations_are_blocked_during_sync(self):
+        other = store.Catalogue(self.filename)
+        self.db.set_extension_filter(self.collection, {"epub"})
+        calls = [
+            lambda: other.create_collection("Autre"),
+            lambda: other.rename_collection(self.collection, "Autre"),
+            lambda: other.delete_collection(self.collection),
+            lambda: other.add_root(self.collection, self.films),
+            lambda: other.relocate(other.roots(self.collection)[0], self.books),
+            lambda: other.remove_root(self.collection, self.root_id),
+        ]
+
+        def during_scan(_source):
+            for action in calls:
+                with self.assertRaisesRegex(OSError, "Catalogue occupé"):
+                    action()
+            self.assertEqual({"epub"}, other.extension_filter(self.collection))
+
+        self.db.synchronize(self.collection, during_scan)
+        other.rename_collection(self.collection, "Après")
+        self.assertEqual("Après", self.db.collections()[0]["name"])
+
+    def test_collection_management_from_window_callbacks(self):
+        shared = self.db.create_collection("Partagée")
+        self.db.add_root(shared, self.books)
+        self.db.synchronize(self.collection)
+        self.db.synchronize(shared)
+        self.db.set_extension_filter(self.collection, {"epub"})
+        original, = self.db.search(self.collection, "Ubik")
+        contents = self.book.read_bytes(), self.book.stat().st_mtime_ns
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.withdraw()
+        app = App(window, self.db)
+        root = next(node for node, scope in app.nodes.items() if scope == (self.root_id, ""))
+        app.load_children(root)
+        branch, = app.tree.get_children(root)
+        app.tree.selection_set(branch)
+        app.select_scope()
+        self.assertEqual("disabled", app.manage_menu.entrycget(3, "state"))
+        with patch("catalogue.ui.simpledialog.askstring", return_value=None) as prompt:
+            app.rename_collection()
+            self.assertEqual("Livres", prompt.call_args.kwargs["initialvalue"])
+        with patch("catalogue.ui.simpledialog.askstring", return_value=" "), \
+                patch("catalogue.ui.messagebox.showerror") as error:
+            app.rename_collection()
+            error.assert_called_once()
+        with patch("catalogue.ui.simpledialog.askstring", return_value="Partagée"), \
+                patch("catalogue.ui.messagebox.showerror") as error:
+            app.rename_collection()
+            error.assert_called_once()
+        self.assertEqual("Livres", self.db.collections()[0]["name"])
+        with patch("catalogue.ui.simpledialog.askstring", return_value=" Romans "):
+            app.rename_collection()
+        self.assertEqual((self.root_id, self.nested.name), app.scope)
+        self.assertEqual(self.collection, app.collection_id())
+
+        reopened = App(window, store.Catalogue(self.filename))
+        reopened.load_collections(self.collection)
+        self.assertEqual(self.collection, reopened.collection_id())
+        self.assertEqual("Romans", reopened.collection_box.get())
+        self.assertEqual({"epub"}, reopened.selected_extensions)
+        renamed, = reopened.rows.values()
+        self.assertEqual(original["detected"], renamed["detected"])
+
+        self.books.rename(self.books.with_name("Hors ligne"))
+        self.db.synchronize(self.collection)
+        app.load_roots()
+        root = next(node for node, scope in app.nodes.items() if scope == (self.root_id, ""))
+        app.tree.selection_set(root)
+        app.select_scope()
+        self.assertEqual("normal", app.manage_menu.entrycget(3, "state"))
+        with patch("catalogue.ui.messagebox.askyesno", return_value=False) as confirm:
+            app.remove_root()
+            self.assertIn(str(self.books), confirm.call_args.args[1])
+        app.scanning = True
+        app.update_buttons()
+        self.assertTrue(app.manage_button.instate(["disabled"]))
+        with patch("catalogue.ui.messagebox.askyesno") as confirm:
+            app.remove_root()
+            app.delete_collection()
+            confirm.assert_not_called()
+        app.scanning = False
+        self.books.with_name("Hors ligne").rename(self.books)
+        with patch("catalogue.ui.messagebox.askyesno", return_value=False) as confirm:
+            app.delete_collection()
+            self.assertIn("Romans", confirm.call_args.args[1])
+        self.assertEqual(2, len(self.db.collections()))
+        with patch("catalogue.ui.messagebox.askyesno", return_value=True):
+            app.delete_collection()
+            self.assertEqual(shared, app.collection_id())
+            self.assertEqual(2, len(app.rows))
+            self.assertEqual(contents, (self.book.read_bytes(), self.book.stat().st_mtime_ns))
+            app.delete_collection()
+        self.assertEqual("", app.collection_box.get())
+        self.assertTrue(app.manage_button.instate(["disabled"]))
+        self.assertFalse(app.new_button.instate(["disabled"]))
+        with patch("catalogue.ui.simpledialog.askstring", return_value="Recréée"):
+            app.new_collection()
+        self.assertEqual("Recréée", app.collection_box.get())
+
+    def test_sort_headings_keep_scope_filter_and_stable_pages(self):
+        for name, size, modified in (
+            ("A.pdf", 100, 1_700_000_000), ("B.mobi", 2, 1_710_000_000),
+            ("C.pdf", 20, 1_720_000_000), ("D.mobi", 20, 1_730_000_000),
+            ("Annexe.jpg", 1, 1_740_000_000), ("Sans extension", 1, 1_750_000_000),
+        ):
+            file = self.nested / name
+            file.write_bytes(b"x" * size)
+            os.utime(file, (modified, modified))
+        self.db.synchronize(self.collection)
+        self.db.set_extension_filter(self.collection, {"pdf", "mobi"})
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.withdraw()
+        app = App(window, self.db)
+        root = next(node for node, scope in app.nodes.items() if scope == (self.root_id, ""))
+        app.load_children(root)
+        branch, = app.tree.get_children(root)
+        app.tree.selection_set(branch)
+        app.select_scope()
+        app.query.set(self.nested.name)
+
+        def heading_click(column):
+            command = app.table.heading(column, "command")
+            window.tk.call(command)
+
+        def names():
+            return [row["name"] for row in app.rows.values()]
+
+        with patch("catalogue.ui.PAGE_SIZE", 2):
+            app.refresh_results()
+            app.next.invoke()
+            heading_click("size")
+            self.assertEqual(0, app.page)
+            self.assertIn("▲", app.table.heading("size", "text"))
+            self.assertEqual(["B.mobi", "C.pdf"], names())
+            app.next.invoke()
+            self.assertEqual(["D.mobi", "A.pdf"], names())
+            heading_click("size")
+            self.assertIn("▼", app.table.heading("size", "text"))
+            self.assertEqual(["A.pdf", "C.pdf"], names())
+            app.next.invoke()
+            self.assertEqual(["D.mobi", "B.mobi"], names())
+            heading_click("modified")
+            self.assertEqual(["A.pdf", "B.mobi"], names())
+            heading_click("modified")
+            self.assertEqual(["D.mobi", "C.pdf"], names())
+            for key in ("name", "extension", "detected", "state"):
+                heading_click(key)
+                self.assertIn("▲", app.table.heading(key, "text"))
+        self.assertEqual(self.nested.name, app.query.get())
+        self.assertEqual((self.root_id, self.nested.name), app.scope)
+        self.assertEqual({"pdf", "mobi"}, app.selected_extensions)
+        rows = self.db.search(self.collection, sort="Extension", descending=False)
+        self.assertEqual("", rows[0]["extension"])
 
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()

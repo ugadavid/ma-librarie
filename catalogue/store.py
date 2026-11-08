@@ -47,15 +47,32 @@ CREATE TABLE IF NOT EXISTS entries (
     state TEXT NOT NULL,
     PRIMARY KEY (root_id, relative, kind)
 );
+CREATE TABLE IF NOT EXISTS catalogue_ids (
+    kind TEXT PRIMARY KEY, last_id INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO catalogue_ids SELECT 'collections', COALESCE(MAX(id), 0) FROM collections;
+INSERT OR IGNORE INTO catalogue_ids SELECT 'roots', COALESCE(MAX(id), 0) FROM roots;
 CREATE INDEX IF NOT EXISTS entries_volume_path ON entries (volume_path);
 CREATE INDEX IF NOT EXISTS entries_parent ON entries (root_id, parent, kind);
 """
-SORTS = {
-    "Nom": "fold(name), name",
-    "Taille": "size DESC",
-    "Modification": "modified DESC",
-    "Première détection": "detected DESC",
+STATES = {
+    "new": "À synchroniser",
+    "available": "Disponible",
+    "partial": "Inventaire partiel",
+    "offline": "Hors ligne",
+    "relocate": "À relocaliser",
+    "error": "Accès impossible",
+    "missing": "Absent",
 }
+SORTS = {
+    "Nom": "fold(name)",
+    "Extension": "fold(extension)",
+    "Taille": "size",
+    "Modification": "modified",
+    "Première détection": "detected",
+    "État": "state_order(CASE WHEN root_state IN ('available', 'partial') THEN state ELSE root_state END)",
+}
+DEFAULT_DESCENDING = {"Taille", "Modification", "Première détection"}
 PACKAGE_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
 DC = "{http://purl.org/dc/elements/1.1/}"
 
@@ -178,6 +195,8 @@ class Catalogue:
         db = sqlite3.connect(self.filename)
         db.row_factory = sqlite3.Row
         db.create_function("fold", 1, str.casefold, deterministic=True)
+        db.create_function("state_order", 1, lambda state: STATES[state].casefold(),
+                           deterministic=True)
         db.execute("PRAGMA foreign_keys = ON")
         try:
             with db:
@@ -185,17 +204,120 @@ class Catalogue:
         finally:
             db.close()
 
+    @contextmanager
+    def mutation(self):
+        # One writer or scanner at a time, including other app instances.
+        # The lock is local to the catalogue and is released when the handle closes.
+        import msvcrt
+
+        lock_path = self.filename.with_suffix(self.filename.suffix + ".lock")
+        with lock_path.open("a+b") as lock:
+            lock.seek(0)
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise OSError("Catalogue occupé. Attendez la fin de la synchronisation ou réessayez.") from exc
+            try:
+                yield
+            finally:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+    @staticmethod
+    def collection_name(name):
+        name = name.strip()
+        if not name:
+            raise ValueError("Donnez un nom à la collection.")
+        return name
+
+    @staticmethod
+    def next_id(db, kind):
+        # An ID held by another window must never refer to a replacement item.
+        return db.execute(
+            "UPDATE catalogue_ids SET last_id = last_id + 1 WHERE kind = ? RETURNING last_id",
+            (kind,),
+        ).fetchone()[0]
+
     def collections(self):
         with self.connect() as db:
             return db.execute("SELECT * FROM collections ORDER BY fold(name), id").fetchall()
 
     def create_collection(self, name):
-        if not name.strip():
-            raise ValueError("Donnez un nom à la collection.")
-        with self.connect() as db:
-            return db.execute(
-                "INSERT INTO collections (name) VALUES (?)", (name.strip(),)
-            ).lastrowid
+        name = self.collection_name(name)
+        with self.mutation(), self.connect() as db:
+            collection = self.next_id(db, "collections")
+            db.execute("INSERT INTO collections (id, name) VALUES (?, ?)", (collection, name))
+            return collection
+
+    def rename_collection(self, collection, name):
+        name = self.collection_name(name)
+        with self.mutation(), self.connect() as db:
+            updated = db.execute("UPDATE collections SET name = ? WHERE id = ?", (name, collection))
+            if not updated.rowcount:
+                raise ValueError("Cette collection n’existe plus.")
+
+    def delete_collection(self, collection):
+        with self.mutation(), self.connect() as db:
+            db.execute("DELETE FROM entries WHERE root_id IN (SELECT id FROM roots WHERE collection_id = ?)",
+                       (collection,))
+            db.execute("DELETE FROM roots WHERE collection_id = ?", (collection,))
+            deleted = db.execute("DELETE FROM collections WHERE id = ?", (collection,))
+            if not deleted.rowcount:
+                raise ValueError("Cette collection n’existe plus.")
+
+    def remove_root(self, collection, root_id):
+        with self.mutation(), self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            roots = db.execute(
+                "SELECT * FROM roots WHERE collection_id = ?", (collection,)
+            ).fetchall()
+            removed = next((root for root in roots if root["id"] == root_id), None)
+            if removed is None:
+                raise ValueError("Cette racine n’existe plus.")
+            removed_parts = Path(removed["relative"]).parts
+            for other in roots:
+                if other["id"] == root_id or other["volume"] != removed["volume"]:
+                    continue
+                parts = Path(other["relative"]).parts
+                shared = min(len(parts), len(removed_parts))
+                if parts[:shared] == removed_parts[:shared]:
+                    self.preserve_covered_entries(db, removed, other, parts)
+            db.execute("DELETE FROM entries WHERE root_id = ?", (root_id,))
+            db.execute("DELETE FROM roots WHERE id = ?", (root_id,))
+
+    @staticmethod
+    def preserve_covered_entries(db, removed, other, root_parts):
+        entries = db.execute("SELECT * FROM entries WHERE root_id = ?", (removed["id"],))
+        ancestors = {}
+        for entry in entries:
+            parts = Path(entry["volume_path"]).parts
+            depth = len(root_parts)
+            if parts[:depth] != root_parts or len(parts) <= depth:
+                continue
+            relative = os.path.join(*parts[depth:])
+            parent = os.path.dirname(relative)
+            state = entry["state"]
+            if state == "available" and removed["state"] not in ("available", "partial"):
+                state = "error"
+            db.execute(
+                """INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (root_id, relative, kind) DO UPDATE SET
+                       first_seen = min(entries.first_seen, excluded.first_seen)""",
+                (other["id"], relative, parent, entry["name"], entry["volume_path"], entry["kind"],
+                 entry["extension"], entry["size"], entry["modified"], entry["first_seen"],
+                 entry["title"], entry["author"], state),
+            )
+            if state != "missing":
+                # A nested source has no entry for its own root directory.
+                while parent and parent not in ancestors:
+                    ancestors[parent] = entry["first_seen"]
+                    parent = os.path.dirname(parent)
+
+        db.executemany(
+            """INSERT OR IGNORE INTO entries VALUES (?, ?, ?, ?, ?, 'dir', '', 0, 0, ?, '', '', 'error')""",
+            ((other["id"], parent, os.path.dirname(parent), os.path.basename(parent),
+              os.path.normpath(os.path.join(other["relative"], parent)), first_seen)
+             for parent, first_seen in ancestors.items()),
+        )
 
     def roots(self, collection):
         with self.connect() as db:
@@ -208,15 +330,17 @@ class Catalogue:
         data = locate(self.filename.parent)
         if source.volume == data.volume and Path(data.relative).is_relative_to(source.relative):
             raise ValueError("Ce dossier contient les données de l’application. Choisissez un sous-dossier.")
-        with self.connect() as db:
-            return db.execute(
-                "INSERT INTO roots (collection_id, path, volume, relative) VALUES (?, ?, ?, ?)",
-                (collection, str(source.path), source.volume, source.relative),
-            ).lastrowid
+        with self.mutation(), self.connect() as db:
+            root_id = self.next_id(db, "roots")
+            db.execute(
+                "INSERT INTO roots (id, collection_id, path, volume, relative) VALUES (?, ?, ?, ?, ?)",
+                (root_id, collection, str(source.path), source.volume, source.relative),
+            )
+            return root_id
 
     def relocate(self, root, folder):
         source = verify(folder, root["volume"], root["relative"])
-        with self.connect() as db:
+        with self.mutation(), self.connect() as db:
             updated = db.execute(
                 """UPDATE roots SET path = ?, state = 'new', revision = revision + 1
                    WHERE id = ? AND revision = ?""",
@@ -262,7 +386,7 @@ class Catalogue:
                 )
 
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0):
+               limit=200, offset=0, *, descending=None):
         terms = query.casefold().split()
         filters = [
             r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
@@ -286,6 +410,9 @@ class Catalogue:
                 args.extend((prefix, prefix))
         where = " AND ".join(filters) or "1"
         order = SORTS[sort]
+        if descending is None:
+            descending = sort in DEFAULT_DESCENDING
+        direction = "DESC" if descending else "ASC"
         with self.connect() as db:
             return db.execute(
                 f"""
@@ -307,12 +434,16 @@ class Catalogue:
                     FROM files WHERE {where}
                 )
                 SELECT * FROM ranked WHERE preference = 1
-                ORDER BY {order}, volume, volume_path LIMIT ? OFFSET ?
+                ORDER BY {order} {direction}, volume, volume_path LIMIT ? OFFSET ?
                 """,
                 (os.sep, os.sep, *args, limit, offset),
             ).fetchall()
 
     def synchronize(self, collection, progress=lambda message: None):
+        with self.mutation():
+            return self.scan_collection(collection, progress)
+
+    def scan_collection(self, collection, progress):
         summary = Summary()
         now = time.time_ns()
         for root in self.roots(collection):

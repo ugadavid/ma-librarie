@@ -16,7 +16,7 @@ Python, Tkinter et SQLite couvrent l’interface, l’accès aux dossiers Window
 
 1. Créez une collection, puis ajoutez vos dossiers avec **Ajouter un dossier…**.
 2. Cliquez sur **Synchroniser**. Le bilan distingue les ajouts, les changements, les nouvelles absences confirmées et les erreurs.
-3. Recherchez un fichier par nom, chemin, titre ou auteur. Le filtre par extension et le tri s’appliquent aux résultats. Sélectionnez **Toute la collection** dans l’arbre pour rechercher sur toutes les racines.
+3. Recherchez un fichier par nom, chemin, titre ou auteur. Le filtre par extension et le tri par en-tête s’appliquent aux résultats. Sélectionnez **Toute la collection** dans l’arbre pour rechercher sur toutes les racines.
 4. Sélectionnez un résultat pour voir son chemin complet et l’état observé à la dernière synchronisation. Vous pouvez copier ce chemin hors ligne. **Afficher dans l’Explorateur** vérifie l’accès au fichier avant de le sélectionner.
 5. Si le dossier d’origine apparaît sous une autre lettre, sélectionnez sa racine puis cliquez sur **Relocaliser…**. Choisissez le dossier d’origine sur le même volume et relancez **Synchroniser**.
 
@@ -28,6 +28,12 @@ Ouvrez **Extensions**, puis choisissez **Livres** (EPUB, MOBI, PDF, AZW, AZW3), 
 
 Le choix est mémorisé par collection et disponible avant le premier inventaire. La recherche et la branche courante sont conservées, et la liste revient à la première page. **Toutes les extensions** réaffiche les fichiers auxiliaires déjà inventoriés sans synchronisation.
 
+## Gérer les collections et trier les résultats
+
+Dans **Gérer la collection**, vous pouvez renommer ou supprimer la collection active. Sélectionnez une racine dans l’arborescence pour activer **Retirer ce dossier source…**, même hors ligne. La suppression et le retrait portent sur le catalogue local. Un fichier couvert par une autre racine de la même collection reste consultable. Les commandes de gestion sont indisponibles pendant la synchronisation.
+
+Cliquez sur un en-tête pour trier les résultats, puis cliquez de nouveau pour inverser l’ordre. La flèche indique le sens actif. Le tri revient à la première page en gardant la recherche, le filtre et la branche. Les tailles et les dates se comparent par valeur. Le volume et le chemin départagent les égalités. Les fichiers sans extension apparaissent en premier dans le tri croissant par extension.
+
 ## Tests
 
 Exécutez la suite dans une session Windows de bureau avec Tkinter.
@@ -36,4 +42,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md)
