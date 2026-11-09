@@ -205,7 +205,7 @@ class SynchronizationChangeTests(unittest.TestCase):
         self.assertEqual({"Ajout A.epub", "Ajout B.epub"}, names())
 
         movies = self.db.create_collection("Films témoins", "movies")
-        app.library_buttons["movies"].invoke()
+        app.library_menu.invoke("Films")
         window.update()
         self.assertEqual(("all",), app.tree.selection())
         scope(f"collection-{movies}")
@@ -215,7 +215,7 @@ class SynchronizationChangeTests(unittest.TestCase):
         self.assertEqual("", badge_for("Ajout A.epub"))
         scope("new")
         self.assertFalse(names())
-        app.library_buttons["books"].invoke()
+        app.library_menu.invoke("Livres")
         window.update()
         scope("new")
         self.assertEqual({"Ajout A.epub", "Ajout B.epub"}, names())

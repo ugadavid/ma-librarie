@@ -288,7 +288,7 @@ class ClassificationTests(unittest.TestCase):
         scope(science_node)
         with patch("catalogue.ui.simpledialog.askstring", return_value=" Fiction "):
             invoke(context_tree(science_node), "Renommer le tag")
-        self.assertEqual("Fiction", app.scope_label.cget("text"))
+        self.assertEqual("Livres › Fiction", app.scope_label.cget("text"))
         self.assertEqual({"Ubik.epub"}, names())
         with patch("catalogue.ui.simpledialog.askstring", return_value=" à DÉCOUVRIR "), \
                 patch("catalogue.ui.messagebox.showerror") as error:
@@ -307,7 +307,7 @@ class ClassificationTests(unittest.TestCase):
         self.assertFalse(app.table.selection())
 
         for library, file in (("movies", "Film.mkv"), ("music", "Musique.mp3")):
-            app.library_buttons[library].invoke()
+            app.library_menu.invoke(store.LIBRARIES[library][0])
             window.update()
             box = dialog(click(file, 3))
             new_tag(box, "À voir")

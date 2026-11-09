@@ -3,6 +3,7 @@ import os
 import tempfile
 import time
 import tkinter as tk
+from tkinter import ttk
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -65,13 +66,13 @@ class NavigationTests(unittest.TestCase):
         app = App(window, db)
         window.update()
         self.assertEqual(str(app.menubar), str(window.cget("menu")))
-        self.assertEqual(["Catalogue", "Recherche", "Affichage"],
-                         [app.menubar.entrycget(index, "label") for index in range(3)])
+        self.assertEqual(["Catalogue", "Bibliothèques", "Recherche", "Affichage"],
+                         [app.menubar.entrycget(index, "label") for index in range(4)])
         for attr in ("new_button", "manage_button", "add_button", "sync_button", "relocate_button",
-                     "duplicate_button", "extension_button", "sort_choice"):
+                     "duplicate_button", "extension_button", "sort_choice", "library_buttons"):
             self.assertFalse(hasattr(app, attr), attr)
 
-        app.library_buttons["movies"].invoke()
+        app.library_menu.invoke("Films")
         with patch("catalogue.ui.simpledialog.askstring", return_value="Films de recette"):
             app.catalogue_menu.invoke("Nouvelle collection…")
         window.update()
@@ -89,7 +90,12 @@ class NavigationTests(unittest.TestCase):
         self.assertTrue(app.scanning)
         self.assertEqual("disabled", app.catalogue_menu.entrycget("Sauvegarder le catalogue…", "state"))
         self.assertEqual("disabled", app.search_menu.entrycget("Rechercher les doublons…", "state"))
+        self.assertEqual("disabled", app.menubar.entrycget("Bibliothèques", "state"))
+        self.assertEqual("disabled", app.library_menu.entrycget("Livres", "state"))
+        app.library_menu.invoke("Livres")
+        self.assertEqual("movies", app.library.get())
         self.settle(window, lambda: app.scanning)
+        self.assertEqual("normal", app.menubar.entrycget("Bibliothèques", "state"))
         root, = db.roots(collection["id"])
         root_node = f'root-{root["id"]}'
 
@@ -158,6 +164,71 @@ class NavigationTests(unittest.TestCase):
             self.settle(window, lambda: app.archive_running)
         error.assert_not_called()
         self.assertEqual("Films de recette", db.collections("movies")[0]["name"])
+
+    def test_library_menu_keeps_search_and_uses_the_active_library_filter(self):
+        folder = tempfile.TemporaryDirectory(prefix="ml014a-")
+        self.addCleanup(folder.cleanup)
+        base = Path(folder.name)
+        db = store.Catalogue(base / "catalogue.sqlite3")
+        source = base / "Source témoin"
+        source.mkdir()
+        for name in ("Commun.mobi", "Commun.mkv", "Commun.mp3"):
+            (source / name).touch()
+        collections = {}
+        for library, name in (("books", "Lectures"), ("movies", "Séances"),
+                              ("music", "Écoutes"), (store.UNCLASSIFIED, "Import")):
+            collection = db.create_collection(name, library)
+            collections[library] = collection
+            db.add_root(collection, source)
+            db.synchronize(collection)
+        for library, extension in (("books", "mobi"), ("movies", "mkv"), ("music", "mp3")):
+            db.set_extension_filter(None, {extension}, library=library)
+
+        window = self.window()
+        window.geometry("850x500")
+        app = App(window, db)
+        window.update()
+        self.assertEqual("unclassified", app.library.get())
+        self.assertEqual("Toutes les collections à classer", app.scope_label.cget("text"))
+        types = [app.library_menu.type(index) for index in range(5)]
+        self.assertEqual(["radiobutton"] * 3 + ["separator", "radiobutton"], types)
+        self.assertEqual(["Livres", "Films", "Musiques", "À classer"],
+                         [app.library_menu.entrycget(index, "label") for index in (0, 1, 2, 4)])
+        self.assertFalse(any(isinstance(widget, ttk.Radiobutton) for widget in app.winfo_children()))
+
+        app.query.set("Commun")
+        app.search_entry.focus_force()
+        for label, key, extension in (("Livres", "books", "mobi"), ("Films", "movies", "mkv"),
+                                       ("Musiques", "music", "mp3")):
+            app.library_menu.invoke(label)
+            window.update()
+            self.assertEqual(key, app.library.get())
+            self.assertEqual("Commun", app.query.get())
+            self.assertEqual(f"Formats · .{extension.upper()}", app.format_indicator.cget("text"))
+            self.assertEqual({f"Commun.{extension}"}, {row["name"] for row in app.rows.values()})
+            self.assertEqual(store.LIBRARIES[key][1], app.scope_label.cget("text"))
+            self.assertEqual(app.search_entry, window.focus_get())
+            self.assertLess(app.navigation.winfo_rooty(), app.result_panes.winfo_rooty())
+            app.tree.selection_set(f"collection-{collections[key]}")
+            window.update()
+            self.assertTrue(app.scope_label.cget("text").startswith(f"{label} › "))
+
+        app.library_menu.invoke("À classer")
+        window.update()
+        node = f"collection-{collections[store.UNCLASSIFIED]}"
+        app.tree.selection_set(node)
+        window.update()
+        self.assertEqual("À classer › Import", app.scope_label.cget("text"))
+        self.context(window, app.tree, node).assert_called_once()
+        submenu = window.nametowidget(app.context_menu.entrycget("Rattacher à une bibliothèque", "menu"))
+        submenu.invoke("Livres")
+        self.assertEqual("Toutes les collections à classer", app.scope_label.cget("text"))
+        self.assertFalse(db.collections(store.UNCLASSIFIED))
+        app.library_menu.invoke("Livres")
+        window.update()
+        self.assertTrue(app.tree.exists(node))
+        self.assertEqual("Tous les livres", app.scope_label.cget("text"))
+        self.assertEqual("Formats · .MOBI", app.format_indicator.cget("text"))
 
     def test_legacy_details_page_selection_and_formats_in_two_widths(self):
         fixture = test_works.WorkTests()

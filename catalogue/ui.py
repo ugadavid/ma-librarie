@@ -207,16 +207,6 @@ class App(ttk.Frame):
         window.protocol("WM_DELETE_WINDOW", self.close)
 
     def build(self):
-        libraries = ttk.Frame(self)
-        libraries.pack(fill="x", pady=(0, 6))
-        self.library_buttons = {}
-        for key, (label, _) in LIBRARIES.items():
-            button = ttk.Radiobutton(
-                libraries, text=label, value=key, variable=self.library, command=self.load_collections
-            )
-            button.pack(side="left", padx=(0, 14))
-            self.library_buttons[key] = button
-
         search_bar = ttk.Frame(self)
         search_bar.pack(fill="x", pady=(0, 8))
         ttk.Label(search_bar, text="Rechercher").pack(side="left")
@@ -314,15 +304,24 @@ class App(ttk.Frame):
         self.menubar = tk.Menu(self, tearoff=False)
         self.window.configure(menu=self.menubar)
         self.catalogue_menu = tk.Menu(self.menubar, tearoff=False)
+        self.library_menu = tk.Menu(self.menubar, tearoff=False)
         self.search_menu = tk.Menu(self.menubar, tearoff=False)
         self.display_menu = tk.Menu(self.menubar, tearoff=False)
-        for label, menu in (("Catalogue", self.catalogue_menu), ("Recherche", self.search_menu),
-                            ("Affichage", self.display_menu)):
+        for label, menu in (("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
+                            ("Recherche", self.search_menu), ("Affichage", self.display_menu)):
             self.menubar.add_cascade(label=label, menu=menu, underline=0)
 
         self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
         self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
         self.catalogue_menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
+
+        for key, (label, _) in LIBRARIES.items():
+            if key == UNCLASSIFIED:
+                self.library_menu.add_separator()
+            self.library_menu.add_radiobutton(
+                label=label, variable=self.library, value=key, command=self.load_collections,
+                underline=2 if key == UNCLASSIFIED else 0,
+            )
 
         self.search_menu.add_command(label="Filtrer par extension…", command=self.edit_extensions)
         self.search_menu.add_command(label="Réinitialiser le filtre", command=self.reset_extensions)
@@ -560,14 +559,18 @@ class App(ttk.Frame):
         elif tag:
             label = tag["name"]
         else:
-            label = LIBRARIES[self.library.get()][1]
+            label = None
         self.active_collection = self.collection_items.get(node)
-        self.scope_label.configure(text=label)
+        self.show_scope_title(label)
         self.selected_extensions = self.catalogue.extension_filter(
             self.collection_id(), library=self.filter_library()
         )
         self.update_extension_label()
         self.refresh_results()
+
+    def show_scope_title(self, scope):
+        library, root_title = LIBRARIES[self.library.get()]
+        self.scope_label.configure(text=f"{library} › {scope}" if scope else root_title)
 
     def show_context_menu(self, event):
         if self.busy:
@@ -658,7 +661,7 @@ class App(ttk.Frame):
                 self.tree.focus("all")
                 self.select_scope()
                 return True
-            self.scope_label.configure(text=tag["name"])
+            self.show_scope_title(tag["name"])
         self.refresh_results(reset=False)
         return True
 
@@ -1090,8 +1093,9 @@ class App(ttk.Frame):
             self.display_menu.entryconfigure("Volet de détails", state="disabled")
         if self.library.get() != "books":
             self.display_menu.entryconfigure("Regrouper par ouvrage", state="disabled")
-        for button in self.library_buttons.values():
-            button.configure(state=state)
+        self.menubar.entryconfigure("Bibliothèques", state=state)
+        for label, _ in LIBRARIES.values():
+            self.library_menu.entryconfigure(label, state=state)
 
     def new_collection(self):
         self.edit_collection_name()
