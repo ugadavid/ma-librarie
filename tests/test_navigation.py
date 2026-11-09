@@ -65,9 +65,9 @@ class NavigationTests(unittest.TestCase):
         window = self.window()
         app = App(window, db)
         window.update()
-        self.assertEqual(str(app.menubar), str(window.cget("menu")))
+        self.assertTrue(app.menubar.winfo_viewable())
         self.assertEqual(["Catalogue", "Bibliothèques", "Recherche", "Affichage"],
-                         [app.menubar.entrycget(index, "label") for index in range(4)])
+                         [button.cget("text") for button in app.menubar.buttons.values()])
         for attr in ("new_button", "manage_button", "add_button", "sync_button", "relocate_button",
                      "duplicate_button", "extension_button", "sort_choice", "library_buttons"):
             self.assertFalse(hasattr(app, attr), attr)
@@ -90,12 +90,12 @@ class NavigationTests(unittest.TestCase):
         self.assertTrue(app.scanning)
         self.assertEqual("disabled", app.catalogue_menu.entrycget("Sauvegarder le catalogue…", "state"))
         self.assertEqual("disabled", app.search_menu.entrycget("Rechercher les doublons…", "state"))
-        self.assertEqual("disabled", app.menubar.entrycget("Bibliothèques", "state"))
+        self.assertEqual("disabled", str(app.menubar.buttons["Bibliothèques"].cget("state")))
         self.assertEqual("disabled", app.library_menu.entrycget("Livres", "state"))
         app.library_menu.invoke("Livres")
         self.assertEqual("movies", app.library.get())
         self.settle(window, lambda: app.scanning)
-        self.assertEqual("normal", app.menubar.entrycget("Bibliothèques", "state"))
+        self.assertEqual("normal", str(app.menubar.buttons["Bibliothèques"].cget("state")))
         root, = db.roots(collection["id"])
         root_node = f'root-{root["id"]}'
 

@@ -13,6 +13,7 @@ from .book_metadata import BOOK_EXTENSIONS
 from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
 from .mosaic import Mosaic
+from .chrome import MenuBar, tint_title
 from .night import Art, Home, TEAL, use_theme
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
@@ -206,6 +207,7 @@ class App(ttk.Frame):
         self.detail_layout_pending = False
         self.pack(fill="both", expand=True)
         self.build()
+        self.bind("<Map>", lambda _event: tint_title(window))
         self.load_collections()
         if start_home:
             self.show_home()
@@ -312,15 +314,15 @@ class App(ttk.Frame):
         self.apply_results_view()
 
     def build_menus(self):
-        self.menubar = tk.Menu(self, tearoff=False)
-        self.window.configure(menu=self.menubar)
-        self.catalogue_menu = tk.Menu(self.menubar, tearoff=False)
-        self.library_menu = tk.Menu(self.menubar, tearoff=False)
-        self.search_menu = tk.Menu(self.menubar, tearoff=False)
-        self.display_menu = tk.Menu(self.menubar, tearoff=False)
-        for label, menu in (("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
-                            ("Recherche", self.search_menu), ("Affichage", self.display_menu)):
-            self.menubar.add_cascade(label=label, menu=menu, underline=0)
+        self.catalogue_menu = tk.Menu(self, tearoff=False)
+        self.library_menu = tk.Menu(self, tearoff=False)
+        self.search_menu = tk.Menu(self, tearoff=False)
+        self.display_menu = tk.Menu(self, tearoff=False)
+        self.menubar = MenuBar(self, self.window, (
+            ("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
+            ("Recherche", self.search_menu), ("Affichage", self.display_menu),
+        ))
+        self.menubar.pack(fill="x", before=self.workspace, pady=(0, 7))
 
         self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
         self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
@@ -1142,7 +1144,7 @@ class App(ttk.Frame):
             self.display_menu.entryconfigure("Volet de détails", state="disabled")
         if self.library.get() != "books":
             self.display_menu.entryconfigure("Regrouper par ouvrage", state="disabled")
-        self.menubar.entryconfigure("Bibliothèques", state=state)
+        self.menubar.buttons["Bibliothèques"].configure(state=state)
         for label, _ in LIBRARIES.values():
             self.library_menu.entryconfigure(label, state=state)
 
