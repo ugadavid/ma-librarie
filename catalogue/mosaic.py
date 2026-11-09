@@ -65,6 +65,7 @@ class Mosaic(ttk.Frame):
         self.images = {}
         self.attempted = set()
         self.selected = None
+        self.selection = set()
         self.library = None
         self.width = 1
         self.columns = 1
@@ -74,12 +75,13 @@ class Mosaic(ttk.Frame):
         self.pump_id = None
         self.poll_id = None
 
-    def show_page(self, rows, library, selected):
+    def show_page(self, rows, library, selected, selection):
         self.hide()
         self.library = library
         self.entries = tuple(rows.items())
         self.indices = {item: index for index, (item, _) in enumerate(self.entries)}
         self.selected = selected
+        self.selection = set(selection)
         self.redraw()
         self.canvas.yview_moveto(0)
         self.reveal(selected)
@@ -96,6 +98,7 @@ class Mosaic(ttk.Frame):
         self.images.clear()
         self.attempted.clear()
         self.selected = None
+        self.selection.clear()
 
     def resize(self, event):
         if event.width != self.width:
@@ -152,16 +155,17 @@ class Mosaic(ttk.Frame):
 
     def paint_selection(self, item):
         if item in self.tiles:
-            selected = item == self.selected
+            selected = item in self.selection
             self.canvas.itemconfigure(self.tiles[item][0], fill="#e2edff" if selected else "#ffffff",
                                       outline="#225ea6" if selected else "#c9d2df",
-                                      width=2 if selected else 1)
+                                      width=3 if item == self.selected else 2 if selected else 1)
 
-    def select_item(self, item):
-        old = self.selected
+    def select_item(self, item, selection):
+        changed = self.selection.symmetric_difference(selection) | {self.selected, item}
         self.selected = item
-        self.paint_selection(old)
-        self.paint_selection(item)
+        self.selection = set(selection)
+        for tile in changed:
+            self.paint_selection(tile)
 
     def item_at(self, event):
         x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
@@ -179,7 +183,7 @@ class Mosaic(ttk.Frame):
     def click(self, event):
         if item := self.item_at(event):
             self.canvas.focus_set()
-            self.select(item)
+            self.select(item, event.state)
         return "break"
 
     def context(self, event):

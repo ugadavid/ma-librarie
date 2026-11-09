@@ -255,8 +255,8 @@ class DuplicateCheck:
         return Result(stable, list(self.issues.values()))
 
 
-def find_duplicates(catalogue, collection, extension, scope, library, cancelled, progress):
+def find_duplicates(catalogue, collection, extension, scope, library, cancelled, progress, *, shelf=None):
     check = DuplicateCheck(cancelled, progress)
     with catalogue.mutation():
         check.check()
-        return check.run(catalogue.duplicate_candidates(collection, extension, scope, library))
+        return check.run(catalogue.duplicate_candidates(collection, extension, scope, library, shelf=shelf))

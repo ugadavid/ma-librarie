@@ -9,7 +9,7 @@ from .duplicates import Cancelled, ISSUE_LABELS, find_duplicates
 
 
 class DuplicateWindow(tk.Toplevel):
-    def __init__(self, app, collection, extension, scope, library, label):
+    def __init__(self, app, collection, extension, scope, library, label, *, shelf=None):
         super().__init__(app.window)
         self.app = app
         self.title("Doublons exacts")
@@ -76,7 +76,7 @@ class DuplicateWindow(tk.Toplevel):
 
             try:
                 result = find_duplicates(app.catalogue, collection, extension, scope, library,
-                                         self.cancelled, progress)
+                                         self.cancelled, progress, shelf=shelf)
             except Cancelled:
                 self.events.put(("cancelled", None))
             except Exception as exc:

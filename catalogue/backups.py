@@ -7,11 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from .store import SCHEMA
+from .store import CLASSIFICATION_SCHEMA, SCHEMA, SCHEMA_V1
 
 
 APPLICATION_ID = 0x4D4C4942  # MLIB
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 SESSION_SLOTS = 32
 
 
@@ -135,14 +135,16 @@ def schema_signature(db):
 
 
 def validate(path, *, backup=True):
+    version = BACKUP_VERSION
     with read_only(path) as db:
         if backup:
             if db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
                 raise BackupError("Ce fichier n’est pas une sauvegarde de Ma Librarie.")
-            if db.execute("PRAGMA user_version").fetchone()[0] != BACKUP_VERSION:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (1, BACKUP_VERSION):
                 raise BackupError("Cette version de sauvegarde n’est pas prise en charge.")
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA)
+            expected.executescript(SCHEMA_V1 if version == 1 else SCHEMA)
             if schema_signature(db) != schema_signature(expected):
                 raise BackupError("Le schéma de la sauvegarde est incompatible.")
         if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
@@ -199,6 +201,11 @@ def prepare_restore(catalogue, source):
             raise BackupError("La sauvegarde doit être un fichier SQLite autonome.")
         stage_snapshot(source, temporary)
         collections, roots = validate(temporary)
+        with closing(sqlite3.connect(temporary)) as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 1:
+                db.executescript(CLASSIFICATION_SCHEMA)
+                db.execute(f"PRAGMA user_version = {BACKUP_VERSION}")
+        validate(temporary)
         return PreparedBackup(temporary, source.name, collections, roots)
     except sqlite3.DatabaseError as exc:
         temporary.unlink(missing_ok=True)

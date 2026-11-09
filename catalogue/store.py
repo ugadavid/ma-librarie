@@ -11,7 +11,7 @@ from .book_metadata import BOOK_EXTENSIONS, EMPTY, MetadataError, book_metadata,
 from .windows import SourceProblem, is_reparse, locate, verify
 
 
-SCHEMA = """
+SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE
 );
@@ -70,6 +70,30 @@ INSERT OR IGNORE INTO catalogue_ids SELECT 'roots', COALESCE(MAX(id), 0) FROM ro
 CREATE INDEX IF NOT EXISTS entries_volume_path ON entries (volume_path);
 CREATE INDEX IF NOT EXISTS entries_parent ON entries (root_id, parent, kind);
 """
+CLASSIFICATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library TEXT NOT NULL,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    UNIQUE (library, name_key)
+);
+CREATE TABLE IF NOT EXISTS file_tags (
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    volume TEXT NOT NULL,
+    volume_path TEXT NOT NULL,
+    PRIMARY KEY (tag_id, volume, volume_path)
+);
+CREATE INDEX IF NOT EXISTS file_tags_by_location ON file_tags (volume, volume_path, tag_id);
+CREATE TABLE IF NOT EXISTS favorites (
+    library TEXT NOT NULL,
+    volume TEXT NOT NULL,
+    volume_path TEXT NOT NULL,
+    PRIMARY KEY (library, volume, volume_path)
+);
+"""
+SCHEMA = SCHEMA_V1 + CLASSIFICATION_SCHEMA
+
 UNCLASSIFIED = "unclassified"
 LIBRARIES = {
     "books": ("Livres", "Tous les livres"),
@@ -518,9 +542,13 @@ class Catalogue:
                 args.extend((prefix, prefix))
         return filters, args
 
-    def duplicate_candidates(self, collection, extension, scope, library):
+    def duplicate_candidates(self, collection, extension, scope, library, shelf=None):
         collections_where, collections_args = self.collection_scope(collection, library)
         filters, args = self.file_filters(extension, scope, "entries.relative")
+        if shelf is not None:
+            predicate, values = self.classification_filter(library, shelf, "roots.volume", "entries.volume_path")
+            filters.append(predicate)
+            args.extend(values)
         where = " AND ".join([collections_where, "kind = 'file'", *filters])
         with self.connect() as db:
             return db.execute(
@@ -537,8 +565,95 @@ class Catalogue:
                 (os.sep, os.sep, *collections_args, *args),
             ).fetchall()
 
+    def tags(self, library):
+        with self.connect() as db:
+            return db.execute(
+                "SELECT id, name FROM tags WHERE library = ? ORDER BY name_key", (library,)
+            ).fetchall()
+
+    @staticmethod
+    def tag_name(name):
+        name = name.strip()
+        if not name:
+            raise ValueError("Donnez un nom au tag.")
+        return name, name.casefold()
+
+    @staticmethod
+    def write_tag(db, library, name, tag=None):
+        label, key = Catalogue.tag_name(name)
+        existing = db.execute(
+            "SELECT id FROM tags WHERE library = ? AND name_key = ?", (library, key)
+        ).fetchone()
+        if existing is not None and existing[0] != tag:
+            raise ValueError("Ce nom de tag existe déjà dans cette bibliothèque.")
+        if tag is None:
+            return db.execute(
+                "INSERT INTO tags (library, name, name_key) VALUES (?, ?, ?)", (library, label, key)
+            ).lastrowid
+        db.execute(
+            "UPDATE tags SET name = ?, name_key = ? WHERE library = ? AND id = ?",
+            (label, key, library, tag),
+        )
+
+    def change_tag(self, library, name, tag=None):
+        with self.mutation(), self.connect() as db:
+            return self.write_tag(db, library, name, tag)
+
+    def delete_tag(self, library, tag):
+        with self.mutation(), self.connect() as db:
+            db.execute("DELETE FROM tags WHERE library = ? AND id = ?", (library, tag))
+
+    def classification(self, library, locations):
+        """Count the selected locations assigned to each tag and to favorites."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            tags = {row["id"]: [row["name"], 0] for row in db.execute(
+                "SELECT id, name FROM tags WHERE library = ? ORDER BY name_key", (library,)
+            )}
+            favorites = 0
+            for volume, path in locations:
+                for row in db.execute(
+                    """SELECT tags.id FROM file_tags JOIN tags ON tags.id = tag_id
+                       WHERE library = ? AND volume = ? AND volume_path = ?""",
+                    (library, volume, path),
+                ):
+                    tags[row["id"]][1] += 1
+                favorites += db.execute(
+                    "SELECT count(*) FROM favorites WHERE library = ? AND volume = ? AND volume_path = ?",
+                    (library, volume, path),
+                ).fetchone()[0]
+        return tags, favorites
+
+    def classify(self, library, locations, changes, new_names):
+        with self.mutation(), self.connect() as db:
+            tags = {row[0] for row in db.execute("SELECT id FROM tags WHERE library = ?", (library,))}
+            if changes.keys() - tags:
+                raise ValueError("Un tag a changé dans une autre fenêtre. Rouvrez le dialogue.")
+            changes = dict(changes)
+            for name in new_names:
+                changes[self.write_tag(db, library, name)] = True
+            for tag, apply in changes.items():
+                sql = ("INSERT OR IGNORE INTO file_tags (tag_id, volume, volume_path) VALUES (?, ?, ?)"
+                       if apply else "DELETE FROM file_tags WHERE tag_id = ? AND volume = ? AND volume_path = ?")
+                db.executemany(sql, ((tag, *location) for location in locations))
+
+    def set_favorites(self, library, locations, favorite):
+        sql = ("INSERT OR IGNORE INTO favorites (library, volume, volume_path) VALUES (?, ?, ?)"
+               if favorite else "DELETE FROM favorites WHERE library = ? AND volume = ? AND volume_path = ?")
+        with self.mutation(), self.connect() as db:
+            db.executemany(sql, ((library, *location) for location in locations))
+
+    @staticmethod
+    def classification_filter(library, shelf, volume, path):
+        if shelf == "favorites":
+            return f"""EXISTS (SELECT 1 FROM favorites AS f WHERE f.library = ?
+                               AND f.volume = {volume} AND f.volume_path = {path})""", (library,)
+        return f"""EXISTS (SELECT 1 FROM file_tags AS t JOIN tags ON tags.id = t.tag_id
+                           WHERE tags.library = ? AND t.tag_id = ?
+                           AND t.volume = {volume} AND t.volume_path = {path})""", (library, shelf)
+
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0, *, descending=None, library=None):
+               limit=200, offset=0, *, descending=None, library=None, shelf=None):
         terms = query.casefold().split()
         filters = [
             r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
@@ -547,6 +662,10 @@ class Catalogue:
         scope_filters, scope_args = self.file_filters(extension, scope)
         filters.extend(scope_filters)
         args = [*terms, *scope_args]
+        if shelf is not None:
+            predicate, values = self.classification_filter(library, shelf, "files.volume", "files.volume_path")
+            filters.append(predicate)
+            args.extend(values)
         where = " AND ".join(filters) or "1"
         collections_where, collections_args = self.collection_scope(collection, library)
         order = SORTS[sort]
