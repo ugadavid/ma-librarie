@@ -39,11 +39,12 @@ def title_lines(text, face, width):
 
 
 class Mosaic(ttk.Frame):
-    def __init__(self, parent, select, menu, state):
+    def __init__(self, parent, select, menu, state, badge):
         super().__init__(parent)
         self.select = select
         self.menu = menu
         self.file_state = state
+        self.change_badge = badge
         self.canvas = tk.Canvas(self, background="#f1f4f8", highlightthickness=0, takefocus=True)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrolled)
@@ -140,7 +141,8 @@ class Mosaic(ttk.Frame):
                 text=fit(row["author"], self.face, label_width),
             )
             state = self.file_state(row)
-            annotation = format_name if state == "Disponible" else f"{format_name} · {state}"
+            badge = self.change_badge(row)
+            annotation = " · ".join(filter(None, (badge, format_name, state if state != "Disponible" else "")))
             self.canvas.create_text(
                 x + 84, y + 77, anchor="nw", font=self.face, fill="#344861",
                 text=fit(annotation, self.face, label_width),

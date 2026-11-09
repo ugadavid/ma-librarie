@@ -23,6 +23,7 @@ EXTENSION_PRESETS = {
     "Films": frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm")),
 }
 PAGE_SIZE = 200
+CHANGE_SHELVES = {"new": "Nouveautés", "modified": "Modifiés"}
 
 
 def date_label(nanoseconds):
@@ -175,6 +176,8 @@ class App(ttk.Frame):
         self.rows = {}
         self.shelf = None
         self.shelf_items = {}
+        self.change_library = None
+        self.sync_changes = {}
         self.selection_anchor = None
         self.result_library = None
         self.events = queue.SimpleQueue()
@@ -254,6 +257,7 @@ class App(ttk.Frame):
         ttk.Label(sources, text="Rayons, collections et dossiers").pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
         self.tree.column("#0", width=245, stretch=True)
+        self.tree.tag_configure("automatic", foreground="#245284")
         self.tree.bind("<<TreeviewOpen>>", self.expand_tree)
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
         self.tree.bind("<Button-3>", self.show_context_menu)
@@ -273,7 +277,7 @@ class App(ttk.Frame):
         self.sort_direction = ttk.Button(self.mosaic_sort, width=12,
                                          command=lambda: self.sort_by(self.sort[0]))
         self.sort_direction.pack(side="left")
-        self.mosaic = Mosaic(results, self.select_tile, self.show_tile_menu, self.file_state)
+        self.mosaic = Mosaic(results, self.select_tile, self.show_tile_menu, self.file_state, self.change_badge)
         self.result_panes = ttk.Panedwindow(results, orient="horizontal")
         self.result_panes.pack(fill="both", expand=True)
         self.result_panes.bind("<Configure>", self.layout_detail)
@@ -348,6 +352,8 @@ class App(ttk.Frame):
         self.tree.insert("", "end", iid="all", text=LIBRARIES[self.library.get()][1])
         self.tree.insert("", "end", iid="favorites", text="Favoris")
         self.tree.insert("", "end", iid="shelves", text="Mes rayons", open=True)
+        for automatic, name in CHANGE_SHELVES.items():
+            self.tree.insert("shelves", "end", iid=automatic, text=name, tags=("automatic",))
         self.load_shelves()
         chosen = self.shelf_node(shelf) if shelf is not None else "all"
         if not self.tree.exists(chosen):
@@ -387,16 +393,16 @@ class App(ttk.Frame):
 
     @staticmethod
     def shelf_node(shelf):
-        return "favorites" if shelf == "favorites" else f"tag-{shelf}"
+        return f"tag-{shelf}" if isinstance(shelf, int) else shelf
 
     def load_shelves(self):
         self.shelf_items = {
             self.shelf_node(tag["id"]): tag for tag in self.catalogue.tags(self.library.get())
         }
         for item in self.tree.get_children("shelves"):
-            if item not in self.shelf_items:
+            if item not in CHANGE_SHELVES and item not in self.shelf_items:
                 self.tree.delete(item)
-        for index, (item, tag) in enumerate(self.shelf_items.items()):
+        for index, (item, tag) in enumerate(self.shelf_items.items(), start=len(CHANGE_SHELVES)):
             if self.tree.exists(item):
                 self.tree.item(item, text=tag["name"])
                 self.tree.move(item, "shelves", index)
@@ -462,7 +468,7 @@ class App(ttk.Frame):
         node = selected[0] if selected else ""
         self.scope = self.nodes.get(node)
         tag = self.shelf_items.get(node)
-        self.shelf = "favorites" if node == "favorites" else tag["id"] if tag else None
+        self.shelf = node if node == "favorites" or node in CHANGE_SHELVES else tag["id"] if tag else None
         if self.scope:
             root_id, relative = self.scope
             root = self.roots[root_id]
@@ -472,6 +478,8 @@ class App(ttk.Frame):
             label = self.collection_items[node]["name"]
         elif node == "favorites":
             label = "Favoris"
+        elif node in CHANGE_SHELVES:
+            label = CHANGE_SHELVES[node]
         elif tag:
             label = tag["name"]
         else:
@@ -669,7 +677,7 @@ class App(ttk.Frame):
         rows = self.catalogue.search(
             self.collection_id(), self.query.get(), self.selected_extensions, self.sort[0],
             self.scope, PAGE_SIZE + 1, self.page * PAGE_SIZE, descending=self.sort[1],
-            library=self.filter_library(), shelf=self.shelf
+            library=self.filter_library(), shelf=self.personal_shelf(), locations=self.change_locations()
         )
         if not rows and self.page:
             self.page -= 1
@@ -677,10 +685,12 @@ class App(ttk.Frame):
             return
         restored = {}
         for row in rows[:PAGE_SIZE]:
+            badge = self.change_badge(row)
+            state = self.file_state(row)
             node = self.table.insert("", "end", values=(
                 row["name"], row["collection_names"], row["extension"], row["size"],
                 date_label(row["modified"]),
-                date_label(row["detected"]), self.file_state(row)
+                date_label(row["detected"]), f"{badge} · {state}" if badge else state
             ))
             self.rows[node] = row
             location = self.location(row)
@@ -698,6 +708,25 @@ class App(ttk.Frame):
         if self.view_mode.get() == "mosaic":
             self.show_mosaic_page()
         self.update_details()
+
+    def personal_shelf(self):
+        return None if self.shelf in CHANGE_SHELVES else self.shelf
+
+    def change_locations(self):
+        if self.shelf in CHANGE_SHELVES:
+            if self.library.get() == self.change_library:
+                return self.sync_changes.get(self.shelf, frozenset())
+            return frozenset()
+        return None
+
+    def change_badge(self, row):
+        if self.library.get() == self.change_library and row["state"] != "missing":
+            location = self.location(row)
+            if location in self.sync_changes["modified"]:
+                return "Modifié"
+            if location in self.sync_changes["new"]:
+                return "Nouveau"
+        return ""
 
     @staticmethod
     def file_state(row):
@@ -817,6 +846,9 @@ class App(ttk.Frame):
             metadata = [f'{title} : {row[field]} ({sources[row[f"{field}_source"]]})'
                         for field, title in (("title", "Titre"), ("author", "Auteur(s)"))
                         if row[field] and row[f"{field}_source"] in sources]
+            badge = self.change_badge(row)
+            if badge:
+                metadata.insert(0, badge)
             self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
@@ -842,7 +874,8 @@ class App(ttk.Frame):
             return
         self.duplicate_window = DuplicateWindow(
             self, self.collection_id(), self.selected_extensions, self.scope,
-            self.filter_library(), self.scope_label.cget("text"), shelf=self.shelf
+            self.filter_library(), self.scope_label.cget("text"),
+            shelf=self.personal_shelf(), locations=self.change_locations()
         )
         self.update_buttons()
         if self.duplicate_window.winfo_viewable():
@@ -1080,6 +1113,7 @@ class App(ttk.Frame):
         self.scan_window = ScanWindow(self.window)
         self.status.set("Synchronisation en cours…")
         self.update_buttons()
+        library = self.library.get()
 
         def worker():
             try:
@@ -1087,7 +1121,7 @@ class App(ttk.Frame):
                     collection, root_id=root_id,
                     on_progress=lambda update: self.events.put(("progress", update))
                 )
-                self.events.put(("done", summary))
+                self.events.put(("done", (library, summary)))
             except Exception as exc:
                 self.events.put(("failed", str(exc) or type(exc).__name__))
 
@@ -1101,6 +1135,10 @@ class App(ttk.Frame):
                 self.scan_window.show_progress(data)
                 continue
             if event == "done":
+                library, data = data
+                if data.compared:
+                    self.change_library = library
+                    self.sync_changes = {"new": data.new_files, "modified": data.modified_files}
                 self.errors = data.errors
                 self.status.set(
                     f"Synchronisation terminée · {len(data.added)} ajout(s) · "
@@ -1222,6 +1260,8 @@ class App(ttk.Frame):
         self.after(50, poll)
 
     def reload_restored_catalogue(self, safety):
+        self.change_library = None
+        self.sync_changes.clear()
         self.errors = []
         self.error_button.state(["disabled"])
         self.sort = "Nom", False

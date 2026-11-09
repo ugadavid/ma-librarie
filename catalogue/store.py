@@ -157,6 +157,25 @@ class Summary:
     changed: set = field(default_factory=set)
     missing: set = field(default_factory=set)
     errors: list = field(default_factory=list)
+    compared: bool = False
+    new_files: set = field(default_factory=set)
+    modified_files: set = field(default_factory=set)
+
+
+def has_baseline(root, has_entries):
+    revision = root["revision"]
+    if revision < 0:
+        return revision % 2 == 1
+    # Older catalogues recorded only the latest scan status. Retained entries
+    # can also establish a reference if the source has since gone offline.
+    return root["state"] == "available" or (root["state"] != "partial" and has_entries)
+
+
+def next_root_revision(revision, baseline):
+    # Keep optimistic concurrency tokens distinct. Negative revisions reserve
+    # odd values for sources with a reference and even values for the others.
+    revision = min(-1, revision - 1)
+    return revision if revision % 2 == baseline else revision - 1
 
 
 def inventory(source, previous, on_examined=None):
@@ -458,10 +477,14 @@ class Catalogue:
     def relocate(self, root, folder):
         source = verify(folder, root["volume"], root["relative"])
         with self.mutation(), self.connect() as db:
+            has_entries = root["revision"] >= 0 and db.execute(
+                "SELECT 1 FROM entries WHERE root_id = ? LIMIT 1", (root["id"],)
+            ).fetchone() is not None
+            revision = next_root_revision(root["revision"], has_baseline(root, has_entries))
             updated = db.execute(
-                """UPDATE roots SET path = ?, state = 'new', revision = revision + 1
+                """UPDATE roots SET path = ?, state = 'new', revision = ?
                    WHERE id = ? AND revision = ?""",
-                (str(source.path), root["id"], root["revision"]),
+                (str(source.path), revision, root["id"], root["revision"]),
             )
             if not updated.rowcount:
                 raise ValueError("La source a changé dans une autre instance. Actualisez la vue.")
@@ -542,15 +565,19 @@ class Catalogue:
                 args.extend((prefix, prefix))
         return filters, args
 
-    def duplicate_candidates(self, collection, extension, scope, library, shelf=None):
+    def duplicate_candidates(self, collection, extension, scope, library, shelf=None, *, locations=None):
         collections_where, collections_args = self.collection_scope(collection, library)
         filters, args = self.file_filters(extension, scope, "entries.relative")
         if shelf is not None:
             predicate, values = self.classification_filter(library, shelf, "roots.volume", "entries.volume_path")
             filters.append(predicate)
             args.extend(values)
+        if locations is not None:
+            filters.append("in_change_shelf(roots.volume, entries.volume_path) AND entries.state != 'missing'")
         where = " AND ".join([collections_where, "kind = 'file'", *filters])
         with self.connect() as db:
+            if locations is not None:
+                db.create_function("in_change_shelf", 2, lambda volume, path: (volume, path) in locations)
             return db.execute(
                 f"""SELECT entries.name, entries.relative, volume_path, roots.volume,
                            roots.relative AS root_relative, roots.path AS root_path,
@@ -653,7 +680,7 @@ class Catalogue:
                            AND t.volume = {volume} AND t.volume_path = {path})""", (library, shelf)
 
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0, *, descending=None, library=None, shelf=None):
+               limit=200, offset=0, *, descending=None, library=None, shelf=None, locations=None):
         terms = query.casefold().split()
         filters = [
             r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
@@ -666,6 +693,8 @@ class Catalogue:
             predicate, values = self.classification_filter(library, shelf, "files.volume", "files.volume_path")
             filters.append(predicate)
             args.extend(values)
+        if locations is not None:
+            filters.append("in_change_shelf(files.volume, files.volume_path) AND state != 'missing'")
         where = " AND ".join(filters) or "1"
         collections_where, collections_args = self.collection_scope(collection, library)
         order = SORTS[sort]
@@ -686,6 +715,8 @@ class Catalogue:
                 ))
             """
         with self.connect() as db:
+            if locations is not None:
+                db.create_function("in_change_shelf", 2, lambda volume, path: (volume, path) in locations)
             return db.execute(
                 f"""
                 WITH eligible AS (
@@ -756,17 +787,21 @@ class Catalogue:
                 state = exc.state
                 errors = [str(exc)]
 
+            baseline = has_baseline(root, bool(previous))
+            compared = baseline and state == "available"
+            revision = next_root_revision(root["revision"], baseline or state == "available")
             with self.connect() as db:
                 updated = db.execute(
-                    """UPDATE roots SET state = ?, revision = revision + 1
+                    """UPDATE roots SET state = ?, revision = ?
                        WHERE id = ? AND revision = ?""",
-                    (state, root["id"], root["revision"]),
+                    (state, revision, root["id"], root["revision"]),
                 )
                 if not updated.rowcount:
                     summary.errors.append(f"{root['path']} — Source modifiée. Relancez la synchronisation.")
                     continue
                 if scan is not None and state != "error":
-                    self.apply_scan(db, root, scan, previous, now, summary)
+                    self.apply_scan(db, root, scan, previous, now, summary, compared)
+            summary.compared |= compared
             summary.errors.extend(f"{root['path']} — {error}" for error in errors)
         with self.connect() as db:
             for volume, key in list(summary.missing):
@@ -779,10 +814,11 @@ class Catalogue:
                 ).fetchone():
                     summary.missing.discard((volume, key))
         summary.changed.difference_update(summary.added)
+        summary.new_files.difference_update(summary.modified_files)
         return summary
 
     @staticmethod
-    def apply_scan(db, root, scan, previous, now, summary):
+    def apply_scan(db, root, scan, previous, now, summary, compared):
         rows = []
         applied = set()
         for relative, entry in scan.entries.items():
@@ -799,7 +835,13 @@ class Catalogue:
             rows.append((root["id"], relative, os.path.dirname(relative), entry.name,
                          key, *fields[:4], first, *fields[4:6], state, *fields[6:]))
             if entry.kind == "file":
+                location = root["volume"], key
+                different = old is not None and fields != tuple(old[column] for column in (
+                    "kind", "extension", "size", "modified", "title", "author",
+                    "title_source", "author_source"))
                 if not old:
+                    if compared:
+                        summary.new_files.add(location)
                     known = db.execute(
                         """SELECT 1 FROM entries JOIN roots ON roots.id = root_id
                            WHERE collection_id = ? AND volume = ? AND volume_path = ?
@@ -807,11 +849,11 @@ class Catalogue:
                         (root["collection_id"], root["volume"], key),
                     ).fetchone()
                     if not known:
-                        summary.added.add((root["volume"], key))
-                elif old["state"] == "missing" or fields != tuple(old[column] for column in (
-                        "kind", "extension", "size", "modified", "title", "author",
-                        "title_source", "author_source")):
-                    summary.changed.add((root["volume"], key))
+                        summary.added.add(location)
+                elif old["state"] == "missing" or different:
+                    summary.changed.add(location)
+                    if compared and different:
+                        summary.modified_files.add(location)
 
         db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         updates = []

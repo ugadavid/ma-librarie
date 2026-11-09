@@ -76,6 +76,12 @@ Dans l’arborescence de chaque bibliothèque, ouvrez **Favoris** ou un rayon so
 
 Le classement est propre à chaque bibliothèque et à chaque emplacement. Le même chemin référencé par plusieurs collections de la bibliothèque partage son classement. Une copie à un autre emplacement a son propre classement. Les associations restent disponibles quand la source est hors ligne.
 
+## Nouveautés et modifications
+
+Sélectionnez une collection et cliquez sur **Synchroniser**. Dans **Mes rayons**, ouvrez **Nouveautés** pour retrouver les fichiers découverts dans une source déjà inventoriée et **Modifiés** pour retrouver ceux dont la taille, la date de modification ou les métadonnées indexées ont changé. Les badges apparaissent dans les trois modes. La recherche, le tri et le filtre de la bibliothèque s’appliquent aux deux rayons.
+
+Le premier inventaire réussi d’une source établit la référence. Une comparaison réussie remplace les résultats de la précédente. Si elle ne trouve aucun changement, les deux rayons se vident. Si aucune source déjà inventoriée ne peut être comparée, le dernier résultat reste visible. Les badges durent le temps de la session et disparaissent lors d’une restauration.
+
 ## Sauvegarder et restaurer le catalogue
 
 Le menu **Catalogue** s’applique à toutes les bibliothèques, même depuis un catalogue vide. **Sauvegarder le catalogue…** propose un fichier SQLite daté à l’emplacement de votre choix. Il contient l’inventaire, les collections, les sources, les métadonnées, les premières détections, les filtres et les réglages mémorisés. Les médias et les images restent dans leurs dossiers. Le chemin du fichier créé s’affiche en bas de la fenêtre.
@@ -94,4 +100,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md) · [Rapport de recette ML-010](reports/ML-010_sauvegarde_restauration.md) · [Rapport de recette ML-011](reports/ML-011_tags_favoris.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md) · [Rapport de recette ML-010](reports/ML-010_sauvegarde_restauration.md) · [Rapport de recette ML-011](reports/ML-011_tags_favoris.md) · [Rapport de recette ML-012](reports/ML-012_changements_synchronisation.md)
