@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from .store import STATES, Catalogue
+from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .windows import explorer_target, select_in_explorer
 
 
@@ -154,6 +154,11 @@ class App(ttk.Frame):
         self.window = window
         self.catalogue = catalogue
         self.collections = []
+        self.collection_items = {}
+        self.active_collection = None
+        self.context_menu = None
+        initial = UNCLASSIFIED if catalogue.collections(UNCLASSIFIED) else "books"
+        self.library = tk.StringVar(window, value=initial)
         self.roots = {}
         self.nodes = {}
         self.rows = {}
@@ -175,12 +180,18 @@ class App(ttk.Frame):
         window.protocol("WM_DELETE_WINDOW", self.close)
 
     def build(self):
+        libraries = ttk.Frame(self)
+        libraries.pack(fill="x", pady=(0, 6))
+        self.library_buttons = {}
+        for key, (label, _) in LIBRARIES.items():
+            button = ttk.Radiobutton(
+                libraries, text=label, value=key, variable=self.library, command=self.load_collections
+            )
+            button.pack(side="left", padx=(0, 14))
+            self.library_buttons[key] = button
+
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 8))
-        ttk.Label(top, text="Collection").pack(side="left")
-        self.collection_box = ttk.Combobox(top, state="readonly", width=26)
-        self.collection_box.pack(side="left", padx=6)
-        self.collection_box.bind("<<ComboboxSelected>>", lambda event: self.load_roots())
         self.new_button = ttk.Button(top, text="Nouvelle collection", command=self.new_collection)
         self.manage_button = ttk.Menubutton(top, text="Gérer la collection")
         self.manage_menu = tk.Menu(self.manage_button, tearoff=False)
@@ -213,21 +224,22 @@ class App(ttk.Frame):
         panes.add(sources, weight=1)
         panes.add(results, weight=4)
 
-        ttk.Label(sources, text="Dossiers sources").pack(anchor="w")
+        ttk.Label(sources, text="Collections et dossiers").pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
         self.tree.column("#0", width=245, stretch=True)
         self.tree.bind("<<TreeviewOpen>>", self.expand_tree)
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
+        self.tree.bind("<Button-3>", self.show_context_menu)
 
-        self.scope_label = ttk.Label(results, text="Toute la collection")
+        self.scope_label = ttk.Label(results, text="")
         self.scope_label.pack(anchor="w")
-        columns = ("name", "extension", "size", "modified", "detected", "state")
+        columns = ("name", "collections", "extension", "size", "modified", "detected", "state")
         self.table = self.scroll_tree(results, columns=columns, show="headings")
-        labels = ("Nom", "Extension", "Taille", "Modification", "Première détection", "État")
+        labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
         saved_widths = self.catalogue.column_widths()
         for column, width, minimum in zip(
-            columns, (235, 85, 85, 125, 145, 105), (95, 64, 65, 92, 105, 80)
+            columns, (235, 155, 85, 85, 125, 145, 105), (95, 95, 64, 65, 92, 105, 80)
         ):
             self.table.column(column, width=max(minimum, saved_widths.get(column, width)),
                               minwidth=minimum, stretch=False)
@@ -281,39 +293,38 @@ class App(ttk.Frame):
         return tree
 
     def collection_id(self):
-        index = self.collection_box.current()
-        return self.collections[index]["id"] if index >= 0 else None
+        return self.active_collection["id"] if self.active_collection else None
 
     def load_collections(self, selected=None, keep_scope=False):
-        self.collections = self.catalogue.collections()
-        self.collection_box.configure(values=[row["name"] for row in self.collections])
-        if self.collections:
-            index = next((i for i, row in enumerate(self.collections) if row["id"] == selected), 0)
-            self.collection_box.current(index)
-        else:
-            self.collection_box.set("")
-        self.load_roots(keep_scope=keep_scope)
-
-    def load_roots(self, keep_scope=False):
-        if not keep_scope:
-            self.scope = None
-        collection = self.collection_id()
-        self.roots = {row["id"]: row for row in self.catalogue.roots(collection)}
+        scope = self.scope if keep_scope else None
+        self.collections = self.catalogue.collections(self.library.get())
+        self.roots.clear()
         self.tree.delete(*self.tree.get_children())
         self.nodes.clear()
-        self.tree.insert("", "end", iid="all", text="Toute la collection")
-        for root in self.roots.values():
-            node = self.tree.insert(
-                "", "end", text=f'{root["path"]} · {STATES[root["state"]]}'
-            )
-            self.nodes[node] = (root["id"], "")
-            self.tree.insert(node, "end")
+        self.collection_items.clear()
+        self.tree.insert("", "end", iid="all", text=LIBRARIES[self.library.get()][1])
         chosen = "all"
-        if self.scope:
-            chosen = next((node for node, scope in self.nodes.items()
-                           if scope[0] == self.scope[0]), "all")
-            # Rebuild just the branch the user was browsing before the scan.
-            for part in Path(self.scope[1]).parts:
+        for collection in self.collections:
+            collection_id = collection["id"]
+            item = self.tree.insert("", "end", iid=f"collection-{collection_id}",
+                                    text=collection["name"], open=selected == collection_id)
+            self.collection_items[item] = collection
+            if selected == collection_id:
+                chosen = item
+            for root in self.catalogue.roots(collection_id):
+                root_id = root["id"]
+                self.roots[root_id] = root
+                node = self.tree.insert(
+                    item, "end", iid=f"root-{root_id}",
+                    text=f'{root["path"]} · {STATES[root["state"]]}'
+                )
+                self.nodes[node] = (root_id, "")
+                self.tree.insert(node, "end")
+                if selected == collection_id and scope and scope[0] == root_id:
+                    chosen = node
+
+        if chosen in self.nodes and scope:
+            for part in Path(scope[1]).parts:
                 self.load_children(chosen)
                 match = next((node for node in self.tree.get_children(chosen)
                               if Path(self.nodes[node][1]).name == part), None)
@@ -322,10 +333,15 @@ class App(ttk.Frame):
                 self.tree.item(chosen, open=True)
                 chosen = match
         self.tree.selection_set(chosen)
+        self.tree.focus(chosen)
         self.tree.see(chosen)
-        self.selected_extensions = self.catalogue.extension_filter(collection)
-        self.update_extension_label()
         self.select_scope()
+
+    def load_roots(self, keep_scope=False):
+        self.load_collections(self.collection_id(), keep_scope=keep_scope)
+
+    def filter_library(self):
+        return self.library.get() if self.collection_id() is None else None
 
     def update_extension_label(self):
         selected = self.selected_extensions
@@ -343,14 +359,15 @@ class App(ttk.Frame):
 
     def edit_extensions(self):
         collection = self.collection_id()
-        if collection is not None:
-            ExtensionDialog(
-                self.window, self.catalogue.extensions(collection), self.selected_extensions,
-                lambda selected: self.apply_extensions(collection, selected)
-            )
+        library = self.filter_library()
+        ExtensionDialog(
+            self.window, self.catalogue.extensions(collection, library=library),
+            self.selected_extensions,
+            lambda selected: self.apply_extensions(collection, selected, library=library)
+        )
 
-    def apply_extensions(self, collection, selected):
-        self.catalogue.set_extension_filter(collection, selected)
+    def apply_extensions(self, collection, selected, *, library=None):
+        self.catalogue.set_extension_filter(collection, selected, library=library)
         self.selected_extensions = selected
         self.update_extension_label()
         self.refresh_results()
@@ -374,16 +391,67 @@ class App(ttk.Frame):
 
     def select_scope(self, _event=None):
         selected = self.tree.selection()
-        self.scope = self.nodes.get(selected[0]) if selected else None
+        node = selected[0] if selected else ""
+        self.scope = self.nodes.get(node)
         if self.scope:
             root_id, relative = self.scope
             root = self.roots[root_id]
+            node = f'collection-{root["collection_id"]}'
             label = f'{Path(root["path"]) / relative} · {STATES[root["state"]]}'
+        elif node in self.collection_items:
+            label = self.collection_items[node]["name"]
         else:
-            label = "Toute la collection"
+            label = LIBRARIES[self.library.get()][1]
+        self.active_collection = self.collection_items.get(node)
         self.scope_label.configure(text=label)
+        self.selected_extensions = self.catalogue.extension_filter(
+            self.collection_id(), library=self.filter_library()
+        )
+        self.update_extension_label()
         self.refresh_results()
-        self.update_buttons()
+
+    def show_context_menu(self, event):
+        if self.scanning:
+            return
+        node = self.tree.identify_row(event.y)
+        collection = self.collection_items.get(node)
+        scope = self.nodes.get(node)
+        if collection is None and (scope is None or scope[1]):
+            return
+
+        if self.context_menu is not None:
+            self.context_menu.destroy()
+        menu = self.context_menu = tk.Menu(self.tree, tearoff=False)
+        if collection is not None:
+            collection_id = collection["id"]
+            menu.add_command(label="Renommer la collection…",
+                             command=lambda: self.rename_collection(collection))
+            menu.add_command(label="Supprimer la collection…",
+                             command=lambda: self.delete_collection(collection))
+            menu.add_command(label="Ajouter un dossier…", command=lambda: self.add_root(collection_id))
+            menu.add_command(label="Synchroniser la collection",
+                             command=lambda: self.synchronize(collection_id),
+                             state="normal" if self.has_roots(collection_id) else "disabled")
+            libraries = tk.Menu(menu, tearoff=False)
+            for key, (label, _) in LIBRARIES.items():
+                if key != self.library.get():
+                    libraries.add_command(label=label,
+                                          command=lambda library=key: self.move_collection(
+                                              collection_id, library))
+            menu.add_cascade(label="Rattacher à une bibliothèque", menu=libraries)
+        else:
+            root = self.roots[scope[0]]
+            menu.add_command(label="Synchroniser ce dossier", command=lambda: self.start_scan(
+                root["collection_id"], root_id=root["id"]))
+            menu.add_command(label="Relocaliser…", command=lambda: self.relocate(root))
+            menu.add_command(label="Retirer ce dossier source…", command=lambda: self.remove_root(root))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def has_roots(self, collection):
+        return any(root["collection_id"] == collection for root in self.roots.values())
 
     def schedule_search(self, *_args):
         if self.pending_search is not None:
@@ -449,11 +517,13 @@ class App(ttk.Frame):
         self.rows.clear()
         rows = self.catalogue.search(
             self.collection_id(), self.query.get(), self.selected_extensions, self.sort[0],
-            self.scope, PAGE_SIZE + 1, self.page * PAGE_SIZE, descending=self.sort[1]
+            self.scope, PAGE_SIZE + 1, self.page * PAGE_SIZE, descending=self.sort[1],
+            library=self.filter_library()
         )
         for row in rows[:PAGE_SIZE]:
             node = self.table.insert("", "end", values=(
-                row["name"], row["extension"], row["size"], date_label(row["modified"]),
+                row["name"], row["collection_names"], row["extension"], row["size"],
+                date_label(row["modified"]),
                 date_label(row["detected"]), self.file_state(row)
             ))
             self.rows[node] = row
@@ -479,7 +549,8 @@ class App(ttk.Frame):
             state = self.file_state(row)
             meta = " · ".join(value for value in (row["title"], row["author"]) if value)
             root_state = STATES[row["root_state"]]
-            label = f"Fichier : {state}  |  Source au dernier inventaire : {root_state}"
+            label = (f'Collections : {row["collection_names"]}  |  Fichier : {state}'
+                     f"  |  Source au dernier inventaire : {root_state}")
             self.details.set(f"{label}  |  {meta}" if meta else label)
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
@@ -489,15 +560,16 @@ class App(ttk.Frame):
 
     def update_buttons(self):
         active = not self.scanning
-        self.collection_box.configure(state="readonly" if active else "disabled")
+        collection = self.collection_id()
+        for button in self.library_buttons.values():
+            button.configure(state="normal" if active else "disabled")
         self.new_button.configure(state="normal" if active else "disabled")
-        self.manage_button.configure(state="normal" if active and self.collection_id() else "disabled")
+        self.manage_button.configure(state="normal" if active and collection else "disabled")
         self.manage_menu.entryconfigure(
             self.remove_root_item, state="normal" if active and self.selected_root() else "disabled"
         )
-        self.extension_button.configure(state="normal" if self.collection_id() else "disabled")
-        self.add_button.configure(state="normal" if active and self.collection_id() else "disabled")
-        self.sync_button.configure(state="normal" if active and self.roots else "disabled")
+        self.add_button.configure(state="normal" if active and collection else "disabled")
+        self.sync_button.configure(state="normal" if active and self.has_roots(collection) else "disabled")
         self.relocate_button.configure(
             state="normal" if active and (self.scope or self.selected_file()) else "disabled"
         )
@@ -505,10 +577,20 @@ class App(ttk.Frame):
     def new_collection(self):
         self.edit_collection_name()
 
-    def rename_collection(self):
-        index = self.collection_box.current()
-        if not self.scanning and index >= 0:
-            self.edit_collection_name(self.collections[index])
+    def rename_collection(self, collection=None):
+        collection = self.active_collection if collection is None else collection
+        if not self.scanning and collection is not None:
+            self.edit_collection_name(collection)
+
+    def move_collection(self, collection, library):
+        if self.scanning:
+            return
+        try:
+            self.catalogue.move_collection(collection, library)
+            self.load_roots(keep_scope=True)
+            self.status.set(f'Collection rattachée à « {LIBRARIES[library][0]} ».')
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            messagebox.showerror("Rattacher la collection", str(exc), parent=self)
 
     def edit_collection_name(self, collection=None):
         if self.scanning:
@@ -523,19 +605,18 @@ class App(ttk.Frame):
         try:
             if collection:
                 self.catalogue.rename_collection(collection["id"], name)
-                self.load_collections(collection["id"], keep_scope=True)
+                self.load_roots(keep_scope=True)
             else:
-                self.load_collections(self.catalogue.create_collection(name))
+                self.load_collections(self.catalogue.create_collection(name, self.library.get()))
         except sqlite3.IntegrityError:
             messagebox.showerror(title, "Ce nom de collection est déjà utilisé.", parent=self)
         except (ValueError, OSError, sqlite3.Error) as exc:
             messagebox.showerror(title, str(exc), parent=self)
 
-    def delete_collection(self):
-        index = self.collection_box.current()
-        if self.scanning or index < 0:
+    def delete_collection(self, collection=None):
+        collection = self.active_collection if collection is None else collection
+        if self.scanning or collection is None:
             return
-        collection = self.collections[index]
         title = "Supprimer la collection"
         if not messagebox.askyesno(
             title,
@@ -546,7 +627,12 @@ class App(ttk.Frame):
             return
         try:
             self.catalogue.delete_collection(collection["id"])
-            self.load_collections()
+            if self.collection_id() == collection["id"]:
+                next_id = next((row["id"] for row in self.collections
+                                if row["id"] != collection["id"]), None)
+                self.load_collections(next_id)
+            else:
+                self.load_roots(keep_scope=True)
             self.status.set("Collection supprimée du catalogue local.")
         except (ValueError, OSError, sqlite3.Error) as exc:
             messagebox.showerror(title, str(exc), parent=self)
@@ -556,8 +642,8 @@ class App(ttk.Frame):
             return self.roots.get(self.scope[0])
         return None
 
-    def remove_root(self):
-        root = self.selected_root()
+    def remove_root(self, root=None):
+        root = self.selected_root() if root is None else root
         if self.scanning or root is None:
             return
         title = "Retirer ce dossier source"
@@ -571,13 +657,13 @@ class App(ttk.Frame):
             return
         try:
             self.catalogue.remove_root(root["collection_id"], root["id"])
-            self.load_roots()
+            self.load_roots(keep_scope=True)
             self.status.set("Dossier retiré de la collection.")
         except (ValueError, OSError, sqlite3.Error) as exc:
             messagebox.showerror(title, str(exc), parent=self)
 
-    def add_root(self):
-        collection = self.collection_id()
+    def add_root(self, collection=None):
+        collection = self.collection_id() if collection is None else collection
         if self.scanning or collection is None:
             return
         folder = filedialog.askdirectory(parent=self, title="Ajouter un dossier source", mustexist=True)
@@ -590,10 +676,15 @@ class App(ttk.Frame):
             except (OSError, ValueError, sqlite3.Error) as exc:
                 messagebox.showerror("Source", str(exc), parent=self)
 
-    def relocate(self):
-        row = self.selected_file()
-        root_id = self.scope[0] if self.scope else row["root_id"]
-        root = self.roots[root_id]
+    def relocate(self, root=None):
+        if self.scanning:
+            return
+        if root is None:
+            row = self.selected_file()
+            root_id = self.scope[0] if self.scope else row["root_id"] if row else None
+            root = self.roots.get(root_id)
+        if root is None:
+            return
         folder = filedialog.askdirectory(
             parent=self, title="Choisir le dossier d’origine sur son volume", mustexist=True
         )
@@ -620,9 +711,9 @@ class App(ttk.Frame):
         except OSError as exc:
             messagebox.showerror("Explorateur Windows", str(exc), parent=self)
 
-    def synchronize(self):
-        collection = self.collection_id()
-        if collection is not None and self.roots:
+    def synchronize(self, collection=None):
+        collection = self.collection_id() if collection is None else collection
+        if self.has_roots(collection):
             self.start_scan(collection)
 
     def start_scan(self, collection, *, root_id=None):

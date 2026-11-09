@@ -17,6 +17,15 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS collections (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS collection_libraries (
+    collection_id INTEGER PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
+    library TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS collection_libraries_by_library
+    ON collection_libraries (library, collection_id);
+CREATE TABLE IF NOT EXISTS library_extension_filters (
+    library TEXT PRIMARY KEY, extensions TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS extension_filters (
     collection_id INTEGER PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
     extensions TEXT NOT NULL
@@ -58,6 +67,13 @@ INSERT OR IGNORE INTO catalogue_ids SELECT 'roots', COALESCE(MAX(id), 0) FROM ro
 CREATE INDEX IF NOT EXISTS entries_volume_path ON entries (volume_path);
 CREATE INDEX IF NOT EXISTS entries_parent ON entries (root_id, parent, kind);
 """
+UNCLASSIFIED = "unclassified"
+LIBRARIES = {
+    "books": ("Livres", "Tous les livres"),
+    "movies": ("Films", "Tous les films"),
+    "music": ("Musiques", "Toutes les musiques"),
+    UNCLASSIFIED: ("À classer", "Toutes les collections à classer"),
+}
 STATES = {
     "new": "À synchroniser",
     "available": "Disponible",
@@ -69,6 +85,7 @@ STATES = {
 }
 SORTS = {
     "Nom": "fold(name)",
+    "Collections": "fold(collection_names)",
     "Extension": "fold(extension)",
     "Taille": "size",
     "Modification": "modified",
@@ -270,16 +287,42 @@ class Catalogue:
                 widths.items(),
             )
 
-    def collections(self):
+    def collections(self, library=None):
+        where, args = self.collection_scope(None, library) if library is not None else ("1", ())
         with self.connect() as db:
-            return db.execute("SELECT * FROM collections ORDER BY fold(name), id").fetchall()
+            return db.execute(
+                f"""SELECT collections.*, COALESCE(library, ?) AS library
+                    FROM collections LEFT JOIN collection_libraries ON collection_id = collections.id
+                    WHERE {where} ORDER BY fold(name), id""",
+                (UNCLASSIFIED, *args),
+            ).fetchall()
 
-    def create_collection(self, name):
+    def create_collection(self, name, library=UNCLASSIFIED):
         name = self.collection_name(name)
         with self.mutation(), self.connect() as db:
             collection = self.next_id(db, "collections")
             db.execute("INSERT INTO collections (id, name) VALUES (?, ?)", (collection, name))
+            self.assign_library(db, collection, library)
             return collection
+
+    def move_collection(self, collection, library):
+        with self.mutation(), self.connect() as db:
+            if not db.execute("SELECT 1 FROM collections WHERE id = ?", (collection,)).fetchone():
+                raise ValueError("Cette collection n’existe plus.")
+            self.assign_library(db, collection, library)
+
+    @staticmethod
+    def assign_library(db, collection, library):
+        if library not in LIBRARIES:
+            raise ValueError("Bibliothèque inconnue.")
+        if library == UNCLASSIFIED:
+            db.execute("DELETE FROM collection_libraries WHERE collection_id = ?", (collection,))
+        else:
+            db.execute(
+                """INSERT INTO collection_libraries (collection_id, library) VALUES (?, ?)
+                   ON CONFLICT (collection_id) DO UPDATE SET library = excluded.library""",
+                (collection, library),
+            )
 
     def rename_collection(self, collection, name):
         name = self.collection_name(name)
@@ -391,41 +434,60 @@ class Catalogue:
                 (root_id, parent),
             ).fetchall()
 
-    def extensions(self, collection):
+    @staticmethod
+    def collection_scope(collection, library):
+        if library is None:
+            return "collections.id = ?", (collection,)
+        if library == UNCLASSIFIED:
+            return "collection_libraries.collection_id IS NULL", ()
+        return "collection_libraries.library = ?", (library,)
+
+    def extensions(self, collection, *, library=None):
+        where, args = self.collection_scope(collection, library)
         with self.connect() as db:
             return [row[0] for row in db.execute(
-                """SELECT DISTINCT extension FROM entries JOIN roots ON roots.id = root_id
-                   WHERE collection_id = ? AND kind = 'file' ORDER BY extension""",
-                (collection,),
+                f"""SELECT DISTINCT extension FROM entries JOIN roots ON roots.id = root_id
+                    JOIN collections ON collections.id = roots.collection_id
+                    LEFT JOIN collection_libraries ON collection_libraries.collection_id = collections.id
+                    WHERE {where} AND kind = 'file' ORDER BY extension""",
+                args,
             )]
 
-    def extension_filter(self, collection):
+    @staticmethod
+    def filter_target(collection, library):
+        if library is None:
+            return "extension_filters", "collection_id", collection
+        return "library_extension_filters", "library", library
+
+    def extension_filter(self, collection, *, library=None):
         """None matches every format, while an empty set matches no files."""
+        table, key, value = self.filter_target(collection, library)
         with self.connect() as db:
             row = db.execute(
-                "SELECT extensions FROM extension_filters WHERE collection_id = ?", (collection,)
+                f"SELECT extensions FROM {table} WHERE {key} = ?", (value,)
             ).fetchone()
             return frozenset(json.loads(row["extensions"])) if row else None
 
-    def set_extension_filter(self, collection, extensions):
+    def set_extension_filter(self, collection, extensions, *, library=None):
+        table, key, value = self.filter_target(collection, library)
         with self.connect() as db:
             if extensions is None:
-                db.execute("DELETE FROM extension_filters WHERE collection_id = ?", (collection,))
+                db.execute(f"DELETE FROM {table} WHERE {key} = ?", (value,))
             else:
                 db.execute(
-                    """INSERT INTO extension_filters (collection_id, extensions) VALUES (?, ?)
-                       ON CONFLICT (collection_id) DO UPDATE SET extensions = excluded.extensions""",
-                    (collection, json.dumps(sorted(set(extensions)))),
+                    f"""INSERT INTO {table} ({key}, extensions) VALUES (?, ?)
+                        ON CONFLICT ({key}) DO UPDATE SET extensions = excluded.extensions""",
+                    (value, json.dumps(sorted(set(extensions)))),
                 )
 
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0, *, descending=None):
+               limit=200, offset=0, *, descending=None, library=None):
         terms = query.casefold().split()
         filters = [
             r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
             for _ in terms
         ]
-        args = [collection, *terms]
+        args = list(terms)
         if extension is not None:
             selected = (extension,) if isinstance(extension, str) else tuple(extension)
             if not selected:
@@ -442,20 +504,40 @@ class Catalogue:
                 filters.append("substr(relative, 1, length(?)) = ?")
                 args.extend((prefix, prefix))
         where = " AND ".join(filters) or "1"
+        collections_where, collections_args = self.collection_scope(collection, library)
         order = SORTS[sort]
         if descending is None:
             descending = sort in DEFAULT_DESCENDING
         direction = "DESC" if descending else "ASC"
+        membership = "collection_name"
+        if library is not None:
+            # Use all indexed aliases in the active library, even if only one matched the query.
+            membership = """
+                (SELECT group_concat(name, ' · ') FROM (
+                    SELECT DISTINCT eligible.name FROM entries AS aliases
+                    JOIN roots ON roots.id = aliases.root_id
+                    JOIN eligible ON eligible.id = roots.collection_id
+                    WHERE aliases.volume_path = ranked.volume_path AND roots.volume = ranked.volume
+                          AND aliases.kind = 'file'
+                    ORDER BY fold(eligible.name), eligible.name
+                ))
+            """
         with self.connect() as db:
             return db.execute(
                 f"""
-                WITH files AS (
+                WITH eligible AS (
+                    SELECT collections.id, collections.name FROM collections
+                    LEFT JOIN collection_libraries ON collection_id = collections.id
+                    WHERE {collections_where}
+                ), files AS (
                     SELECT entries.*, roots.volume, roots.relative AS root_relative,
                            roots.path AS root_path, roots.state AS root_state,
+                           eligible.name AS collection_name,
                            rtrim(roots.path, ?) || ? || entries.relative AS full_path,
                            MIN(first_seen) OVER (PARTITION BY volume, volume_path) AS detected
                     FROM entries JOIN roots ON roots.id = root_id
-                    WHERE collection_id = ? AND kind = 'file'
+                    JOIN eligible ON eligible.id = roots.collection_id
+                    WHERE kind = 'file'
                 ), ranked AS (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY volume, volume_path
@@ -465,11 +547,13 @@ class Catalogue:
                             ELSE 1 END, root_id
                     ) AS preference
                     FROM files WHERE {where}
+                ), labeled AS (
+                    SELECT *, {membership} AS collection_names FROM ranked WHERE preference = 1
                 )
-                SELECT * FROM ranked WHERE preference = 1
+                SELECT * FROM labeled
                 ORDER BY {order} {direction}, volume, volume_path LIMIT ? OFFSET ?
                 """,
-                (os.sep, os.sep, *args, limit, offset),
+                (*collections_args, os.sep, os.sep, *args, limit, offset),
             ).fetchall()
 
     def synchronize(self, collection, progress=None, *, root_id=None, on_progress=None):

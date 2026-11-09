@@ -310,6 +310,7 @@ class CatalogueTests(unittest.TestCase):
         app.destroy()
 
         reopened = App(window, store.Catalogue(self.filename))
+        reopened.load_collections(movies)
         self.assertEqual(EXTENSION_PRESETS["Films"], reopened.selected_extensions)
         reopened.load_collections(self.collection)
         self.assertEqual(frozenset({"epub", "azw3"}), reopened.selected_extensions)
@@ -381,6 +382,7 @@ class CatalogueTests(unittest.TestCase):
         calls = [
             lambda: other.create_collection("Autre"),
             lambda: other.rename_collection(self.collection, "Autre"),
+            lambda: other.move_collection(self.collection, "books"),
             lambda: other.delete_collection(self.collection),
             lambda: other.add_root(self.collection, self.films),
             lambda: other.relocate(other.roots(self.collection)[0], self.books),
@@ -435,7 +437,7 @@ class CatalogueTests(unittest.TestCase):
         reopened = App(window, store.Catalogue(self.filename))
         reopened.load_collections(self.collection)
         self.assertEqual(self.collection, reopened.collection_id())
-        self.assertEqual("Romans", reopened.collection_box.get())
+        self.assertEqual("Romans", reopened.active_collection["name"])
         self.assertEqual({"epub"}, reopened.selected_extensions)
         renamed, = reopened.rows.values()
         self.assertEqual(original["detected"], renamed["detected"])
@@ -469,12 +471,12 @@ class CatalogueTests(unittest.TestCase):
             self.assertEqual(2, len(app.rows))
             self.assertEqual(contents, (self.book.read_bytes(), self.book.stat().st_mtime_ns))
             app.delete_collection()
-        self.assertEqual("", app.collection_box.get())
+        self.assertIsNone(app.active_collection)
         self.assertTrue(app.manage_button.instate(["disabled"]))
         self.assertFalse(app.new_button.instate(["disabled"]))
         with patch("catalogue.ui.simpledialog.askstring", return_value="Recréée"):
             app.new_collection()
-        self.assertEqual("Recréée", app.collection_box.get())
+        self.assertEqual("Recréée", app.active_collection["name"])
 
     def test_sort_headings_keep_scope_filter_and_stable_pages(self):
         for name, size, modified in (
@@ -632,6 +634,7 @@ class CatalogueTests(unittest.TestCase):
         self.assertAlmostEqual(original["name"] + 45, custom["name"], delta=2)
         self.assertEqual({"name": custom["name"]}, self.db.column_widths())
         window.state("zoomed")
+        app.load_collections(self.collection)
         app.apply_extensions(self.collection, {"epub"})
         window.update()
         self.assertEqual(custom, app.result_widths())
@@ -641,12 +644,109 @@ class CatalogueTests(unittest.TestCase):
         window.update()
         self.assertEqual(custom, reopened.result_widths())
 
+    def test_library_search_groups_physical_paths_and_preserves_preferences(self):
+        second = self.db.create_collection("Romans B", "books")
+        movies = self.db.create_collection("Séances", "movies")
+        self.db.move_collection(self.collection, "books")
+        self.db.add_root(second, self.nested)
+        distinct = self.base / "Deuxième emplacement"
+        distinct.mkdir()
+        self.db.add_root(second, distinct)
+        self.db.add_root(movies, self.films)
+        epub(distinct / self.book.name)
+        self.db.synchronize(self.collection)
+        first = self.db.search(self.collection, "Dick")[0]["detected"]
+        self.db.synchronize(second)
+        self.db.synchronize(movies)
+        self.db.set_extension_filter(self.collection, {"pdf"})
+        self.db.set_extension_filter(None, {"epub"}, library="books")
+
+        rows = self.db.search(None, "Dick", library="books")
+        self.assertEqual(2, len(rows))
+        by_path = {row["full_path"]: row for row in rows}
+        shared = by_path[str(self.book)]
+        self.assertEqual("Livres · Romans B", shared["collection_names"])
+        self.assertEqual(first, shared["detected"])
+        self.assertEqual("Romans B", by_path[str(distinct / self.book.name)]["collection_names"])
+        self.assertEqual([], self.db.search(None, "Dick", library="movies"))
+        self.assertEqual([], self.db.search(None, "Dick", library="music"))
+        self.assertEqual([], self.db.search(self.collection, "Dick", extension={"pdf"}))
+
+        # An alias still contributes its membership if only the other observation matches.
+        with self.db.connect() as db:
+            db.execute("UPDATE entries SET author = '' WHERE root_id = ?", (self.root_id,))
+        row = next(row for row in self.db.search(None, "Dick", library="books")
+                   if row["full_path"] == str(self.book))
+        self.assertEqual("Livres · Romans B", row["collection_names"])
+        pages = [self.db.search(None, "Dick", sort="Collections", library="books",
+                                limit=1, offset=i)[0] for i in range(2)]
+        self.assertEqual(["Livres · Romans B", "Romans B"], [r["collection_names"] for r in pages])
+
+        reopened = store.Catalogue(self.filename)
+        self.assertEqual({"pdf"}, reopened.extension_filter(self.collection))
+        self.assertEqual({"epub"}, reopened.extension_filter(None, library="books"))
+        self.assertIsNone(reopened.extension_filter(None, library="music"))
+
+    def test_legacy_catalogue_starts_unclassified_without_scanning(self):
+        self.db.synchronize(self.collection)
+        self.db.set_extension_filter(self.collection, {"epub"})
+        self.db.save_column_widths({"name": 287})
+        roots = [tuple(row) for row in self.db.roots(self.collection)]
+        with self.db.connect() as db:
+            db.execute("DROP TABLE collection_libraries")
+            db.execute("DROP TABLE library_extension_filters")
+
+        with patch.object(store, "inventory", side_effect=AssertionError("Scan automatique")):
+            reopened = store.Catalogue(self.filename)
+            legacy, = reopened.collections(store.UNCLASSIFIED)
+            self.assertEqual(self.collection, legacy["id"])
+            self.assertEqual([], reopened.collections("books"))
+            reopened.move_collection(self.collection, "books")
+            self.assertEqual([], reopened.collections(store.UNCLASSIFIED))
+            self.assertEqual(roots, [tuple(row) for row in reopened.roots(self.collection)])
+            self.assertEqual({"epub"}, reopened.extension_filter(self.collection))
+            self.assertEqual({"name": 287}, reopened.column_widths())
+            self.assertEqual("Ubik.epub", reopened.search(None, "Dick", library="books")[0]["name"])
+
+    def test_context_commands_target_the_row_under_pointer(self):
+        other = self.db.create_collection("Autre collection")
+        other_root = self.db.add_root(other, self.films)
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.geometry("1150x550")
+        app = App(window, self.db)
+        app.load_collections(self.collection)
+        window.update()
+
+        def menu_for(node):
+            app.tree.see(node)
+            window.update()
+            x, y, _, height = app.tree.bbox(node)
+            with patch.object(tk.Menu, "tk_popup"):
+                app.tree.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
+                window.update()
+            self.assertEqual(self.collection, app.collection_id())
+            return app.context_menu
+
+        with patch("catalogue.ui.simpledialog.askstring", return_value="Séances") as prompt:
+            menu_for(f"collection-{other}").invoke(0)
+            self.assertEqual("Autre collection", prompt.call_args.kwargs["initialvalue"])
+        self.assertEqual("Séances", next(row["name"] for row in self.db.collections()
+                                        if row["id"] == other))
+        with patch.object(app, "start_scan") as scan:
+            menu_for(f"collection-{other}").invoke(3)
+            scan.assert_called_once_with(other)
+        with patch.object(app, "start_scan") as scan:
+            menu_for(f"root-{other_root}").invoke(0)
+            scan.assert_called_once_with(other, root_id=other_root)
+
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()
         self.addCleanup(window.destroy)
         window.withdraw()
         app = App(window, self.db)
         self.assertFalse(app.rows)
+        app.load_collections(self.collection)
         app.sync_button.invoke()
 
         def finish_scan():
