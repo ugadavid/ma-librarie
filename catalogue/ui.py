@@ -6,7 +6,10 @@ import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, ttk
+
+from . import dialogs as messagebox, dialogs as simpledialog
+from .dialogs import FIELD_COLORS, NightWindow
 
 from .backups import CatalogueSession, prepare_restore, restore_backup, save_backup
 from .book_metadata import BOOK_EXTENSIONS
@@ -15,6 +18,7 @@ from .duplicate_view import DuplicateWindow
 from .mosaic import Mosaic
 from .chrome import MenuBar, tint_title
 from .night import Art, Home, TEAL, use_theme
+from .night_menu import NightMenu
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
 from .windows import explorer_target, select_in_explorer
@@ -43,7 +47,7 @@ def extension_label(extension):
     return f".{extension.upper()}" if extension else "Sans extension"
 
 
-class ExtensionDialog(tk.Toplevel):
+class ExtensionDialog(NightWindow):
     def __init__(self, parent, available, selected, apply_filter):
         super().__init__(parent)
         self.withdraw()
@@ -72,7 +76,7 @@ class ExtensionDialog(tk.Toplevel):
         ttk.Label(panel, text="Cliquez sur les formats à afficher.").pack(anchor="w")
         choices = ttk.Frame(panel)
         choices.pack(fill="both", expand=True, pady=(4, 8))
-        self.options = tk.Listbox(choices, selectmode="multiple", exportselection=False, height=11)
+        self.options = tk.Listbox(choices, selectmode="multiple", exportselection=False, height=11, **FIELD_COLORS)
         scroll = ttk.Scrollbar(choices, command=self.options.yview)
         self.options.configure(yscrollcommand=scroll.set)
         self.options.pack(side="left", fill="both", expand=True)
@@ -91,8 +95,7 @@ class ExtensionDialog(tk.Toplevel):
         y = parent.winfo_y() + (parent.winfo_height() - self.winfo_reqheight()) // 2
         self.geometry(f"{x:+d}{y:+d}")
         self.deiconify()
-        self.wait_visibility()
-        self.grab_set()
+        self.take_focus(self.options)
 
     def select_formats(self, formats):
         self.options.selection_clear(0, "end")
@@ -121,7 +124,7 @@ class ExtensionDialog(tk.Toplevel):
             self.destroy()
 
 
-class ScanWindow(tk.Toplevel):
+class ScanWindow(NightWindow):
     def __init__(self, parent):
         super().__init__(parent)
         self.withdraw()
@@ -314,10 +317,10 @@ class App(ttk.Frame):
         self.apply_results_view()
 
     def build_menus(self):
-        self.catalogue_menu = tk.Menu(self, tearoff=False)
-        self.library_menu = tk.Menu(self, tearoff=False)
-        self.search_menu = tk.Menu(self, tearoff=False)
-        self.display_menu = tk.Menu(self, tearoff=False)
+        self.catalogue_menu = NightMenu(self, tearoff=False)
+        self.library_menu = NightMenu(self, tearoff=False)
+        self.search_menu = NightMenu(self, tearoff=False)
+        self.display_menu = NightMenu(self, tearoff=False)
         self.menubar = MenuBar(self, self.window, (
             ("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
             ("Recherche", self.search_menu), ("Affichage", self.display_menu),
@@ -346,7 +349,7 @@ class App(ttk.Frame):
                                               command=self.change_results_view)
         self.display_menu.add_checkbutton(label="Volet de détails", variable=self.details_visible,
                                           command=self.change_results_view)
-        self.sort_menu = tk.Menu(self.display_menu, tearoff=False)
+        self.sort_menu = NightMenu(self.display_menu, tearoff=False)
         self.sort_column = tk.StringVar(self.window)
         self.sort_descending = tk.BooleanVar(self.window)
         for label in self.headings.values():
@@ -420,7 +423,7 @@ class App(ttk.Frame):
                 _, top, _, height = bounds
                 x, y = 8, top + height // 2
             event = SimpleNamespace(widget=widget, x=x, y=y, x_root=widget.winfo_rootx() + x,
-                                    y_root=widget.winfo_rooty() + y)
+                                    y_root=widget.winfo_rooty() + y, keyboard=True)
             handler(event)
             return "break"
 
@@ -632,7 +635,7 @@ class App(ttk.Frame):
 
         if self.context_menu is not None:
             self.context_menu.destroy()
-        menu = self.context_menu = tk.Menu(self.tree, tearoff=False)
+        menu = self.context_menu = NightMenu(self.tree, tearoff=False)
         if collection is not None:
             collection_id = collection["id"]
             menu.add_command(label="Renommer la collection…",
@@ -643,7 +646,7 @@ class App(ttk.Frame):
             menu.add_command(label="Synchroniser la collection",
                              command=lambda: self.synchronize(collection_id),
                              state="normal" if self.has_roots(collection_id) else "disabled")
-            libraries = tk.Menu(menu, tearoff=False)
+            libraries = NightMenu(menu, tearoff=False)
             for key, (label, _) in LIBRARIES.items():
                 if key != self.library.get():
                     libraries.add_command(label=label,
@@ -656,25 +659,19 @@ class App(ttk.Frame):
                 root["collection_id"], root_id=root["id"]))
             menu.add_command(label="Relocaliser…", command=lambda: self.relocate(root))
             menu.add_command(label="Retirer ce dossier source…", command=lambda: self.remove_root(root))
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root, keyboard=getattr(event, "keyboard", False))
 
     def show_shelf_menu(self, node, event):
         if self.context_menu is not None:
             self.context_menu.destroy()
-        menu = self.context_menu = tk.Menu(self.tree, tearoff=False)
+        menu = self.context_menu = NightMenu(self.tree, tearoff=False)
         if node == "shelves":
             menu.add_command(label="Nouveau tag…", command=self.edit_tag)
         else:
             tag = self.shelf_items[node]
             menu.add_command(label="Renommer le tag…", command=lambda: self.edit_tag(tag))
             menu.add_command(label="Supprimer le tag…", command=lambda: self.remove_tag(tag))
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root, keyboard=getattr(event, "keyboard", False))
 
     def edit_tag(self, tag=None):
         name = simpledialog.askstring(
@@ -1116,12 +1113,12 @@ class App(ttk.Frame):
         if self.duplicate_window.winfo_viewable():
             self.duplicate_window.grab_set()
         else:
-            self.duplicate_window.bind("<Map>", self.grab_duplicates)
+            self.duplicate_map_binding = self.duplicate_window.bind("<Map>", self.grab_duplicates, add="+")
 
     def grab_duplicates(self, event):
         if event.widget is self.duplicate_window:
             self.duplicate_window.grab_set()
-            self.duplicate_window.unbind("<Map>")
+            self.duplicate_window.unbind("<Map>", self.duplicate_map_binding)
 
     def duplicates_closed(self):
         self.duplicate_window = None
@@ -1301,7 +1298,7 @@ class App(ttk.Frame):
             return previous
         if previous is not None:
             previous.destroy()
-        menu = tk.Menu(widget, tearoff=False)
+        menu = NightMenu(widget, tearoff=False)
         actionable = not self.busy and (results or member)
         targets = self.menu_targets(item, row) if actionable else ()
         book_action = actionable and books and (work or row["extension"] in BOOK_EXTENSIONS)
@@ -1320,10 +1317,7 @@ class App(ttk.Frame):
             self.add_classification_menu(menu, targets)
         if book_action:
             self.add_work_menu(menu, row)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root, keyboard=getattr(event, "keyboard", False))
         return menu
 
     def menu_targets(self, item, row):
@@ -1573,7 +1567,7 @@ class App(ttk.Frame):
         self.archive_running = True
         self.status.set(caption)
         self.update_controls()
-        progress = tk.Toplevel(self.window)
+        progress = NightWindow(self.window)
         progress.title("Catalogue")
         progress.transient(self.window)
         progress.resizable(False, False)
@@ -1584,8 +1578,7 @@ class App(ttk.Frame):
         bar.start()
         progress.update_idletasks()
         if progress.winfo_viewable():
-            progress.grab_set()
-            progress.focus_set()
+            progress.take_focus()
 
         replies = queue.SimpleQueue()
 
@@ -1636,9 +1629,10 @@ class App(ttk.Frame):
         self.status.set(f"Catalogue restauré. Copie de sécurité — {safety}")
 
     def show_errors(self):
-        window = tk.Toplevel(self)
+        window = NightWindow(self)
         window.title("Erreurs de synchronisation")
-        text = tk.Text(window, width=96, height=18, wrap="word")
+        window.transient(self.window)
+        text = tk.Text(window, width=96, height=18, wrap="word", **FIELD_COLORS)
         scroll = ttk.Scrollbar(window, command=text.yview)
         text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
@@ -1667,6 +1661,7 @@ def main():
     if os.name != "nt":
         raise SystemExit("Ma Librarie nécessite Windows.")
     window = tk.Tk()
+    use_theme(window)
     window.title("Ma Médiathèque")
     window.geometry("1130x680")
     window.minsize(850, 480)

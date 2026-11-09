@@ -1,14 +1,16 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
+
+from . import dialogs as messagebox
+from .dialogs import NightWindow
 
 from .night import Art, GOLD, INK, LINE, MUTED, PANEL, SELECTED, TEAL, TEXT
 
 
-class TagDialog(tk.Toplevel):
+class TagDialog(NightWindow):
     def __init__(self, parent, tags, count, apply, *, subject=None):
         super().__init__(parent)
         self.withdraw()
-        self.previous_focus = parent.focus_get()
         self.title("Gérer les tags")
         self.transient(parent)
         self.bind("<Escape>", lambda _event: self.destroy())
@@ -65,9 +67,7 @@ class TagDialog(tk.Toplevel):
         y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self.winfo_reqheight()) // 2)
         self.geometry(f"{x:+d}{y:+d}")
         self.deiconify()
-        self.wait_visibility()
-        self.grab_set()
-        entry.focus_set()
+        self.take_focus(entry)
 
     def add_choice(self, tag, name, matches):
         initial = 1 if matches == self.count else -1 if matches else 0
@@ -101,12 +101,6 @@ class TagDialog(tk.Toplevel):
             self.canvas.yview_moveto(row.winfo_y() / extent)
         elif row.winfo_y() + row.winfo_height() > bottom * extent:
             self.canvas.yview_moveto((row.winfo_y() + row.winfo_height()) / extent - (bottom - top))
-
-    def destroy(self):
-        super().destroy()
-        target = self.previous_focus
-        if target is not None and target.winfo_exists() and target.winfo_viewable():
-            target.focus_set()
 
     def add_tag(self, _event=None):
         name = self.name.get().strip()

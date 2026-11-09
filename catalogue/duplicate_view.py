@@ -5,10 +5,11 @@ from collections import Counter
 from datetime import datetime
 from tkinter import font, ttk
 
+from .dialogs import FIELD_COLORS, NightWindow
 from .duplicates import Cancelled, ISSUE_LABELS, find_duplicates
 
 
-class DuplicateWindow(tk.Toplevel):
+class DuplicateWindow(NightWindow):
     def __init__(self, app, collection, extension, scope, library, label, *, shelf=None, locations=None):
         super().__init__(app.window)
         self.app = app
@@ -145,10 +146,10 @@ class DuplicateWindow(tk.Toplevel):
         self.file_menu = self.app.post_file_menu(self.table, self.rows, self.file_menu, event)
 
     def show_issues(self):
-        window = tk.Toplevel(self)
+        window = NightWindow(self)
         window.title("Anomalies de la vérification")
         window.transient(self)
-        text = tk.Text(window, width=100, height=19, wrap="word")
+        text = tk.Text(window, width=100, height=19, wrap="word", **FIELD_COLORS)
         scroll = ttk.Scrollbar(window, command=text.yview)
         text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")

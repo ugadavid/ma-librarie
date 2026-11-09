@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from catalogue import chrome
+from catalogue.night_menu import NightMenu
 
 
 @unittest.skipUnless(os.name == "nt", "La recette utilise la fenêtre Windows.")
@@ -37,8 +38,9 @@ class ChromeTests(unittest.TestCase):
         window.update()
         button = bar.buttons["Bibliothèques"]
 
-        def while_posted(*_coordinates):
+        def while_posted(*_coordinates, on_close, **_options):
             self.assertTrue(button.instate(["selected"]))
+            on_close()
 
         with patch.object(libraries, "tk_popup", side_effect=while_posted) as popup:
             entry.event_generate("<Alt-KeyPress-b>")
@@ -57,3 +59,29 @@ class ChromeTests(unittest.TestCase):
             popup.assert_called_once()
             window.update()
             self.assertEqual(entry, window.focus_get())
+
+    def test_themed_submenu_is_invoked_and_focus_is_restored(self):
+        window = self.window()
+        entry = tk.Entry(window)
+        entry.pack()
+        menu = NightMenu(window, tearoff=False)
+        child = NightMenu(menu, tearoff=False)
+        seen = []
+        child.add_command(label="Témoin", command=lambda: seen.append("action"))
+        menu.add_command(label="Indisponible", state="disabled")
+        menu.add_cascade(label="Sous-menu", menu=child)
+        window.update()
+        entry.focus_force()
+        window.update()
+        menu.tk_popup(entry.winfo_rootx(), entry.winfo_rooty() + 30, keyboard=True)
+        window.update()
+        popup = menu.popup
+        self.assertEqual(1, popup.levels[0].active)
+        popup.levels[0].canvas.event_generate("<Right>")
+        window.update()
+        self.assertEqual(2, len(popup.levels))
+        popup.levels[1].canvas.event_generate("<Return>")
+        window.update()
+        self.assertEqual(["action"], seen)
+        self.assertIsNone(menu.popup)
+        self.assertEqual(entry, window.focus_get())

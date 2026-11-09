@@ -11,6 +11,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from catalogue.night_menu import NightMenu
+
 from catalogue import book_metadata, covers, duplicates, store
 from catalogue.ui import App, EXTENSION_PRESETS
 from catalogue.windows import Location, SourceProblem, explorer_target, locate
@@ -744,7 +746,7 @@ class CatalogueTests(unittest.TestCase):
             app.tree.see(node)
             window.update()
             x, y, _, height = app.tree.bbox(node)
-            with patch.object(tk.Menu, "tk_popup"):
+            with patch.object(NightMenu, "tk_popup"):
                 app.tree.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
                 window.update()
             self.assertEqual(self.collection, app.collection_id())
@@ -791,7 +793,7 @@ class CatalogueTests(unittest.TestCase):
                 window.update()
                 previous = app.scope, app.sort, app.page, app.selected_extensions
                 x, y, _, height = app.table.bbox(target, "name")
-                with patch.object(tk.Menu, "tk_popup") as popup:
+                with patch.object(NightMenu, "tk_popup") as popup:
                     app.table.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
                 popup.assert_called_once()
                 app.file_menu.invoke(0)
@@ -804,7 +806,7 @@ class CatalogueTests(unittest.TestCase):
                 explorer.assert_called_once_with(self.book)
 
         heading = next(y for y in range(35) if app.table.identify_region(20, y) == "heading")
-        with patch.object(tk.Menu, "tk_popup") as popup:
+        with patch.object(NightMenu, "tk_popup") as popup:
             app.table.event_generate("<Button-3>", x=20, y=heading)
             app.table.event_generate("<Button-3>", x=20, y=app.table.winfo_height() - 10)
         popup.assert_not_called()
@@ -951,7 +953,7 @@ class CatalogueTests(unittest.TestCase):
         window.update()
         self.assertEqual(str(second), view.path.get())
         x, y, _, height = view.table.bbox(item, "path")
-        with patch.object(tk.Menu, "tk_popup") as popup:
+        with patch.object(NightMenu, "tk_popup") as popup:
             view.table.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
         popup.assert_called_once()
         view.file_menu.invoke(0)
@@ -1183,7 +1185,7 @@ class CatalogueTests(unittest.TestCase):
         second = original[1]
         card = app.mosaic.tiles[second][0]
         x, y, _, _ = app.mosaic.canvas.coords(card)
-        with patch.object(tk.Menu, "tk_popup") as popup:
+        with patch.object(NightMenu, "tk_popup") as popup:
             app.mosaic.canvas.event_generate("<Button-3>", x=int(x + 10), y=int(y + 10))
         popup.assert_called_once()
         app.file_menu.invoke(0)

@@ -1,6 +1,10 @@
 from collections import Counter
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import ttk
+
+from . import dialogs as messagebox, dialogs as simpledialog
+from .dialogs import FIELD_COLORS
+from .night import INK
 
 
 def format_counts(members):
@@ -76,7 +80,7 @@ class ProposalDialog(simpledialog.Dialog):
         frame = ttk.Frame(panel)
         frame.pack(fill="both", expand=True)
         canvas = tk.Canvas(frame, width=710, height=min(310, len(self.candidates) * 29 + 8),
-                           highlightthickness=0)
+                           background=INK, highlightthickness=0)
         vertical = ttk.Scrollbar(frame, command=canvas.yview)
         horizontal = ttk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
         canvas.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
@@ -111,7 +115,8 @@ class WorkPicker(simpledialog.Dialog):
         super().__init__(parent, title)
 
     def body(self, panel):
-        self.options = tk.Listbox(panel, width=62, height=min(12, len(self.works)), exportselection=False)
+        self.options = tk.Listbox(panel, width=62, height=min(12, len(self.works)),
+                                  exportselection=False, **FIELD_COLORS)
         scroll = ttk.Scrollbar(panel, command=self.options.yview)
         self.options.configure(yscrollcommand=scroll.set)
         self.options.pack(side="left", fill="both", expand=True)

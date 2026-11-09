@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from catalogue.night_menu import NightMenu
+
 from catalogue import backups, store
 from catalogue.ui import App, EXTENSION_PRESETS, ExtensionDialog
 
@@ -42,7 +44,7 @@ class NavigationTests(unittest.TestCase):
             widget.focus_force()
             if item is not None:
                 widget.focus(item)
-        with patch.object(tk.Menu, "tk_popup") as popup:
+        with patch.object(NightMenu, "tk_popup") as popup:
             if keyboard:
                 widget.event_generate("<Shift-F10>")
             else:

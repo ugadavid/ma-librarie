@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from catalogue.night_menu import NightMenu
+
 from catalogue import backups, store
 from catalogue.covers import Image
 from catalogue.duplicates import find_duplicates
@@ -190,7 +192,7 @@ class WorkTests(unittest.TestCase):
             table.see(item)
             window.update()
             x, y, _, _ = table.bbox(item, column)
-            with patch.object(tk.Menu, "tk_popup") as popup:
+            with patch.object(NightMenu, "tk_popup") as popup:
                 table.event_generate(f"<Button-{button}>", x=x+9, y=y+7)
                 window.update()
             if button == 3:
@@ -236,7 +238,7 @@ class WorkTests(unittest.TestCase):
         app.table.focus(node(self.extra))
         app.table.focus_force()
         window.update()
-        with patch.object(tk.Menu, "tk_popup") as popup:
+        with patch.object(NightMenu, "tk_popup") as popup:
             app.table.event_generate("<Shift-F10>")
         popup.assert_called_once()
         self.assertTrue(app.file_menu.entrycget(0, "label").startswith("Regrouper la sélection"))
@@ -325,7 +327,7 @@ class WorkTests(unittest.TestCase):
 
         # A group menu manages group tags, and an expanded file menu removes only that member.
         x, y, _, _ = canvas.coords(app.mosaic.tiles[group][0])
-        with patch.object(tk.Menu, "tk_popup"):
+        with patch.object(NightMenu, "tk_popup"):
             canvas.event_generate("<Button-3>", x=int(x+15), y=int(y+16))
         invoke("Gérer les tags de l’ouvrage")
         dialog = next(widget for widget in window.winfo_children() if isinstance(widget, TagDialog))
@@ -347,7 +349,7 @@ class WorkTests(unittest.TestCase):
         for answer in (False, True):
             item = next(item for item, row in app.rows.items() if App.is_work(row) and row["work_id"] == source)
             x, y, _, _ = canvas.coords(app.mosaic.tiles[item][0])
-            with patch.object(tk.Menu, "tk_popup"):
+            with patch.object(NightMenu, "tk_popup"):
                 canvas.event_generate("<Button-3>", x=int(x+14), y=int(y+16))
             with patch("catalogue.ui.WorkPicker", return_value=SimpleNamespace(result=work)), \
                     patch("catalogue.ui.messagebox.askyesno", return_value=answer) as confirm:

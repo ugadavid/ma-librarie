@@ -8,6 +8,8 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from catalogue.night_menu import NightMenu
+
 from catalogue import backups, store
 from catalogue.tag_dialog import TagDialog
 from catalogue.night import SELECTED
@@ -128,7 +130,7 @@ class ClassificationTests(unittest.TestCase):
                 window.update_idletasks()
                 x, y, _, _ = widget.bbox(item, "name")
                 x, y = x + 10, y + 5
-            with patch.object(tk.Menu, "tk_popup") as popup:
+            with patch.object(NightMenu, "tk_popup") as popup:
                 widget.event_generate(f"<Button-{button}>", x=x, y=y, state=state)
                 window.update()
             if button == 3:
@@ -144,7 +146,7 @@ class ClassificationTests(unittest.TestCase):
             app.tree.see(item)
             window.update_idletasks()
             x, y, _, _ = app.tree.bbox(item)
-            with patch.object(tk.Menu, "tk_popup") as popup:
+            with patch.object(NightMenu, "tk_popup") as popup:
                 app.tree.event_generate("<Button-3>", x=x + 12, y=y + 4)
                 window.update()
             popup.assert_called_once()

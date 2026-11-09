@@ -54,6 +54,7 @@ class MenuBar(ttk.Frame):
         self.bindings = {}
         self.return_focus = None
         self.posting = False
+        self.keyboard = False
 
         style = ttk.Style(self)
         style.configure("Night.Menu.TButton", background=INK, foreground=TEXT, padding=(11, 4),
@@ -81,9 +82,12 @@ class MenuBar(ttk.Frame):
     def bind_key(self, sequence, callback):
         self.bindings[sequence] = self.window.bind(sequence, callback, add="+")
 
-    @staticmethod
-    def invoke(button):
-        button.invoke()
+    def invoke(self, button):
+        self.keyboard = True
+        try:
+            button.invoke()
+        finally:
+            self.keyboard = False
         return "break"
 
     def focus_menu(self, _event):
@@ -115,16 +119,25 @@ class MenuBar(ttk.Frame):
         previous = self.window.focus_get()
         self.posting = True
         button.state(["selected"])
-        try:
-            button.update_idletasks()
-            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
-        finally:
+        def finished():
             self.posting = False
             if button.winfo_exists():
                 button.state(["!selected"])
                 if (previous in self.buttons.values()
                         and self.window.focus_get() in self.buttons.values()):
                     self.cancel(None)
+
+        def switch(offset):
+            enabled = [item for item in self.buttons.values() if not item.instate(["disabled"])]
+            self.invoke(enabled[(enabled.index(button) + offset) % len(enabled)])
+
+        try:
+            button.update_idletasks()
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height(),
+                          keyboard=self.keyboard, on_close=finished, switch=switch)
+        except tk.TclError:
+            finished()
+            raise
 
     def destroy(self):
         for sequence, callback in self.bindings.items():

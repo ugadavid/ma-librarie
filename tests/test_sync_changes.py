@@ -220,6 +220,12 @@ class SynchronizationChangeTests(unittest.TestCase):
         scope("new")
         self.assertEqual({"Ajout A.epub", "Ajout B.epub"}, names())
 
+        # Let the thumbnail worker finish reading this directory before renaming it on Windows.
+        deadline = time.monotonic() + 5
+        while (app.mosaic.loading or app.mosaic.pump_id is not None) and time.monotonic() < deadline:
+            window.update()
+            time.sleep(.02)
+        self.assertFalse(app.mosaic.loading)
         offline = self.source.rename(self.base / "Hors ligne")
         scope(f"collection-{self.books}")
         scan()
