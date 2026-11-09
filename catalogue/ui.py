@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from .book_metadata import BOOK_EXTENSIONS
 from .duplicate_view import DuplicateWindow
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .windows import explorer_target, select_in_explorer
@@ -14,7 +15,7 @@ from .windows import explorer_target, select_in_explorer
 
 ALL_EXTENSIONS = "Toutes les extensions"
 EXTENSION_PRESETS = {
-    "Livres": frozenset(("epub", "mobi", "pdf", "azw", "azw3")),
+    "Livres": BOOK_EXTENSIONS,
     "Films": frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm")),
 }
 PAGE_SIZE = 200
@@ -549,11 +550,15 @@ class App(ttk.Frame):
         self.full_path.set(row["full_path"] if row else "")
         if row:
             state = self.file_state(row)
-            meta = " · ".join(value for value in (row["title"], row["author"]) if value)
             root_state = STATES[row["root_state"]]
             label = (f'Collections : {row["collection_names"]}  |  Fichier : {state}'
                      f"  |  Source au dernier inventaire : {root_state}")
-            self.details.set(f"{label}  |  {meta}" if meta else label)
+            sources = {"epub-embedded": "EPUB intégré", "pdf-embedded": "PDF intégré",
+                       "opf": "compagnon metadata.opf"}
+            metadata = [f'{title} : {row[field]} ({sources[row[f"{field}_source"]]})'
+                        for field, title in (("title", "Titre"), ("author", "Auteur(s)"))
+                        if row[field] and row[f"{field}_source"] in sources]
+            self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
         self.update_buttons()

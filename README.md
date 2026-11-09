@@ -26,7 +26,15 @@ Les collections issues d’un ancien catalogue sont accessibles dans **À classe
 4. Sélectionnez un résultat pour voir son chemin complet et l’état observé à la dernière synchronisation. Faites un clic droit sur un fichier pour choisir **Copier le chemin**, même hors ligne, ou **Afficher dans l’Explorateur**. Les commandes ciblent la ligne sous le pointeur. L’Explorateur sélectionne le fichier après vérification de son accès.
 5. Si le dossier d’origine apparaît sous une autre lettre, sélectionnez sa racine puis cliquez sur **Relocaliser…**. Choisissez le dossier d’origine sur le même volume et relancez **Synchroniser**.
 
-La première détection correspond à la date de catalogage. Le scan lit les sources et ignore les points de réanalyse, dont les jonctions, les liens symboliques et certains fichiers à la demande. Les métadonnées intégrées sont lues pour les EPUB. Les sources sont des dossiers sur des volumes locaux identifiables par Windows.
+La première détection correspond à la date de catalogage. Le scan lit les sources et ignore les points de réanalyse, dont les jonctions, les liens symboliques et certains fichiers à la demande. Les sources sont des dossiers sur des volumes locaux identifiables par Windows.
+
+## Métadonnées de livres
+
+La recherche utilise le titre et les auteurs intégrés aux EPUB et, avec le lecteur facultatif, aux PDF. Installez ce lecteur depuis le dépôt avec `py -3 -m pip install -r requirements-pdf.txt`. Sans pypdf, les PDF restent cherchables par nom, chemin et métadonnées déjà cataloguées ou fournies par un compagnon.
+
+Placez un fichier **metadata.opf** dans le dossier immédiat d’un livre pour compléter ses métadonnées. Une référence locale dans le manifeste ou le guide, ou une correspondance unique avec un nom de type **Titre** ou **Titre - Auteur**, permet de l’associer. Les formats du préréglage **Livres** qui partagent le même nom de base peuvent utiliser le même compagnon. Les détails indiquent la provenance de chaque champ.
+
+Lancez **Synchroniser** pour enrichir les livres déjà catalogués et prendre en compte les modifications ou le retrait d’un compagnon. Le filtre **Livres** masque les OPF dans les résultats. L’extraction est limitée à 64 Mio par PDF, 128 Mio par EPUB et 2 Mio par document XML de métadonnées.
 
 ## Filtrer par extensions
 
@@ -58,4 +66,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md)

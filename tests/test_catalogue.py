@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from catalogue import duplicates, store
+from catalogue import book_metadata, duplicates, store
 from catalogue.ui import App, EXTENSION_PRESETS
 from catalogue.windows import Location, SourceProblem, explorer_target, locate
 
@@ -938,6 +938,121 @@ class CatalogueTests(unittest.TestCase):
         view.request_close()
         self.assertIsNone(app.duplicate_window)
         self.assertEqual(saved, (app.scope, app.sort, app.selected_extensions, app.query.get()))
+
+    def test_companion_metadata_updates_without_changing_book(self):
+        book = self.nested / "Titre témoin - Auteure Témoin.mobi"
+        azw = book.with_name(book.stem.lower() + ".AZW3")
+        unrelated = self.nested / "Sans rapport.mobi"
+        for file in (book, azw, unrelated):
+            file.touch()
+        original = (book.read_bytes(), book.stat().st_mtime_ns)
+        self.db.synchronize(self.collection)
+        initial, = self.db.search(self.collection, extension="azw3")
+        opf = self.nested / "metadata.opf"
+
+        def write(author, href=""):
+            manifest = f'<manifest><item href="{href}"/></manifest>' if href else ""
+            opf.write_text(
+                f'<package xmlns="http://www.idpf.org/2007/opf" '
+                f'xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>'
+                f'<dc:title>Titre témoin</dc:title><dc:creator>{author}</dc:creator>'
+                f'</metadata>{manifest}</package>', encoding="utf-8",
+            )
+
+        write("Auteure Témoin")
+        self.db.synchronize(self.collection)
+        self.assertEqual({book.name, azw.name}, {row["name"] for row in self.db.search(
+            self.collection, "Auteure Témoin", {"mobi", "azw3"})})
+        # This author is absent from the filenames, and an explicit URI targets the stem.
+        write("Nouvelle Signature", "Titre%20témoin%20-%20Auteure%20Témoin.mobi")
+        self.db.synchronize(self.collection)
+        matches = self.db.search(self.collection, "Nouvelle Signature", {"mobi", "azw3"})
+        self.assertEqual({book.name, azw.name}, {row["name"] for row in matches})
+        self.assertTrue(all(row["author_source"] == "opf" for row in matches))
+
+        with patch.object(store, "companion_metadata", side_effect=PermissionError("Témoin")):
+            self.db.synchronize(self.collection)
+        self.assertEqual(2, len(self.db.search(self.collection, "Nouvelle Signature", {"mobi", "azw3"})))
+        opf.unlink()
+        self.db.synchronize(self.collection)
+        final, = self.db.search(self.collection, extension="azw3")
+        self.assertEqual("", final["author"])
+        self.assertEqual("", final["title_source"])
+        self.assertEqual(initial["detected"], final["detected"])
+        self.assertEqual(original, (book.read_bytes(), book.stat().st_mtime_ns))
+
+    def test_companion_ambiguity_and_embedded_precedence(self):
+        (self.nested / "Témoin.mobi").touch()
+        (self.nested / "Témoin - Auteur annexe.azw3").touch()
+        opf = self.nested / "metadata.opf"
+
+        def write(title, href):
+            opf.write_text(
+                f'<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                f'<metadata><dc:title>{title}</dc:title><dc:creator>Auteur annexe</dc:creator>'
+                f'</metadata><manifest><item href="{href}"/></manifest></package>', encoding="utf-8",
+            )
+
+        write("Témoin", "https://example.invalid/Témoin.mobi")
+        self.db.synchronize(self.collection)
+        self.assertFalse(self.db.search(self.collection, "Auteur annexe", "mobi"))
+        write("Titre annexe", "Ubik.epub")
+        self.db.synchronize(self.collection)
+        result, = self.db.search(self.collection, "Dick", "epub")
+        self.assertEqual("Philip K. Dick", result["author"])
+        self.assertEqual("Le temps désarticulé", result["title"])
+        self.assertEqual("epub-embedded", result["author_source"])
+        opf.write_text("<package><metadata>", encoding="utf-8")
+        self.assertTrue(self.db.synchronize(self.collection).errors)
+        self.assertEqual(1, len(self.db.search(self.collection, "Dick", "epub")))
+
+    @unittest.skipIf(book_metadata.PdfReader is None, "Installer les dépendances PDF.")
+    def test_pdf_fields_can_mix_sources_and_survive_without_optional_reader(self):
+        from pypdf import PdfWriter
+
+        pdf = self.nested / "scan_042.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_metadata({"/Title": "Titre intégré", "/Author": " "})
+        writer.write(pdf)
+        opf = self.nested / "metadata.opf"
+        opf.write_text(
+            '<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<metadata><dc:title>Titre compagnon</dc:title><dc:creator>Signature annexe</dc:creator>'
+            '</metadata><guide><reference href="./scan_042.pdf"/></guide></package>',
+            encoding="utf-8",
+        )
+        self.db.synchronize(self.collection)
+        row, = self.db.search(self.collection, "Titre intégré Signature annexe", "pdf")
+        self.assertEqual(("pdf-embedded", "opf"), (row["title_source"], row["author_source"]))
+        with patch.object(book_metadata, "PdfReader", None):
+            self.db.synchronize(self.collection)
+        self.assertEqual(1, len(self.db.search(self.collection, "Titre intégré", "pdf")))
+        opf.unlink()
+        self.db.synchronize(self.collection)
+        row, = self.db.search(self.collection, "Titre intégré", "pdf")
+        self.assertEqual("", row["author"])
+
+        from pypdf.xmp import XmpInformation
+
+        xmp = XmpInformation.create()
+        xmp.dc_title = {"x-default": "Voyage XMP"}
+        xmp.dc_creator = ["Signature XMP"]
+        xmp_writer = PdfWriter()
+        xmp_writer.add_blank_page(width=72, height=72)
+        xmp_writer.xmp_metadata = xmp
+        xmp_writer.write(self.books / "export_xmp.pdf")
+        self.db.synchronize(self.collection)
+        row, = self.db.search(self.collection, "Voyage XMP Signature XMP", "pdf")
+        self.assertEqual(("pdf-embedded", "pdf-embedded"),
+                         (row["title_source"], row["author_source"]))
+
+        encrypted = self.books / "ferme.pdf"
+        writer.encrypt("mot de passe témoin")
+        writer.write(encrypted)
+        self.db.synchronize(self.collection)
+        row, = self.db.search(self.collection, "ferme", "pdf")
+        self.assertEqual(("", ""), (row["title"], row["author"]))
 
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()

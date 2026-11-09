@@ -3,13 +3,11 @@ import os
 import sqlite3
 import stat
 import time
-import zipfile
-import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from xml.etree import ElementTree
 
+from .book_metadata import BOOK_EXTENSIONS, EMPTY, MetadataError, book_metadata, companion_metadata
 from .windows import SourceProblem, is_reparse, locate, verify
 
 
@@ -54,6 +52,8 @@ CREATE TABLE IF NOT EXISTS entries (
     title TEXT NOT NULL,
     author TEXT NOT NULL,
     state TEXT NOT NULL,
+    title_source TEXT NOT NULL DEFAULT '',
+    author_source TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (root_id, relative, kind)
 );
 CREATE TABLE IF NOT EXISTS column_widths (
@@ -93,8 +93,6 @@ SORTS = {
     "État": "state_order(CASE WHEN root_state IN ('available', 'partial') THEN state ELSE root_state END)",
 }
 DEFAULT_DESCENDING = {"Taille", "Modification", "Première détection"}
-PACKAGE_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
-DC = "{http://purl.org/dc/elements/1.1/}"
 
 
 @dataclass(frozen=True)
@@ -106,6 +104,8 @@ class Entry:
     modified: int
     title: str = ""
     author: str = ""
+    title_source: str = ""
+    author_source: str = ""
 
 
 @dataclass
@@ -132,27 +132,6 @@ class Summary:
     errors: list = field(default_factory=list)
 
 
-def epub_metadata(path):
-    with zipfile.ZipFile(path) as book:
-        def read_xml(name):
-            with book.open(name) as stream:
-                data = stream.read(2 * 1024 * 1024 + 1)
-            if len(data) > 2 * 1024 * 1024:
-                raise ValueError("Métadonnées EPUB trop volumineuses")
-            return ElementTree.fromstring(data)
-
-        container = read_xml("META-INF/container.xml")
-        package = container.find(f".//{{{PACKAGE_NS}}}rootfile")
-        if package is None:
-            raise ValueError("Paquet EPUB introuvable")
-        opf = read_xml(package.attrib["full-path"])
-        return tuple(
-            " / ".join("".join(node.itertext()).strip()
-                       for node in opf.iter(f"{DC}{tag}") if "".join(node.itertext()).strip())
-            for tag in ("title", "creator")
-        )
-
-
 def inventory(source, previous, on_examined=None):
     result = Scan()
     pending = [""]
@@ -166,45 +145,58 @@ def inventory(source, previous, on_examined=None):
             if is_reparse(info):
                 result.blocked.add(relative)
                 continue
+            files = []
+            companion_unknown = False
             with os.scandir(folder) as children:
                 for child in children:
                     key = os.path.join(relative, child.name)
+                    is_companion = child.name.casefold() == "metadata.opf"
                     try:
                         info = child.stat(follow_symlinks=False)
                     except OSError as exc:
                         result.fail(key, exc)
+                        companion_unknown |= is_companion
                         continue
                     if is_reparse(info):
                         result.blocked.add(key)
+                        companion_unknown |= is_companion
                         continue
                     if stat.S_ISDIR(info.st_mode):
                         pending.append(key)
                         result.entries[key] = Entry(child.name, "dir", "", 0, 0)
                     elif stat.S_ISREG(info.st_mode):
                         extension = Path(child.name).suffix.removeprefix(".").casefold()
-                        metadata = ("", "")
-                        if extension == "epub":
-                            old = previous.get((key, "file"))
-                            if (old and old["size"] == info.st_size
-                                    and old["modified"] == info.st_mtime_ns
-                                    and (old["title"] or old["author"])):
-                                metadata = old["title"], old["author"]
-                            else:
-                                try:
-                                    metadata = epub_metadata(child.path)
-                                except (OSError, ValueError, KeyError, RuntimeError,
-                                        NotImplementedError, ElementTree.ParseError,
-                                        zipfile.BadZipFile, EOFError, zlib.error) as exc:
-                                    result.errors.append(f"{key} — Métadonnées EPUB : {exc}")
-                        result.entries[key] = Entry(
-                            child.name, "file", extension, info.st_size, info.st_mtime_ns, *metadata
-                        )
-                        examined += 1
-                        if on_examined is not None:
-                            now = time.monotonic()
-                            if now - last_report >= 0.15:
-                                on_examined(examined)
-                                last_report = now
+                        files.append((child, key, info, extension))
+
+            books = [child.name for child, _, _, extension in files if extension in BOOK_EXTENSIONS]
+            sidecars = [child for child, _, _, _ in files if child.name.casefold() == "metadata.opf"]
+            companion, matched = EMPTY, set()
+            if companion_unknown:
+                companion = None
+            elif books and len(sidecars) == 1:
+                try:
+                    companion, matched = companion_metadata(Path(sidecars[0].path), books)
+                except (OSError, MetadataError) as exc:
+                    result.errors.append(f"{os.path.join(relative, sidecars[0].name)} — {exc}")
+                    companion = None
+
+            for child, key, info, extension in files:
+                metadata = ()
+                if extension in BOOK_EXTENSIONS:
+                    fields = companion if companion is None or child.name in matched else EMPTY
+                    metadata = book_metadata(
+                        Path(child.path), extension, info.st_size, info.st_mtime_ns,
+                        previous.get((key, "file")), fields, result.errors, key,
+                    )
+                result.entries[key] = Entry(
+                    child.name, "file", extension, info.st_size, info.st_mtime_ns, *metadata
+                )
+                examined += 1
+                if on_examined is not None:
+                    now = time.monotonic()
+                    if now - last_report >= 0.15:
+                        on_examined(examined)
+                        last_report = now
         except OSError as exc:
             result.fail(relative, exc)
     if on_examined is not None:
@@ -227,6 +219,15 @@ class Catalogue:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(SCHEMA)
+            db.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(entries)")}
+            for field in ("title", "author"):
+                if f"{field}_source" not in columns:
+                    db.execute(f"ALTER TABLE entries ADD COLUMN {field}_source TEXT NOT NULL DEFAULT ''")
+                    db.execute(
+                        f"""UPDATE entries SET {field}_source = 'epub-embedded'
+                            WHERE extension = 'epub' AND {field} != ''"""
+                    )
 
     @contextmanager
     def connect(self):
@@ -375,12 +376,12 @@ class Catalogue:
             if state == "available" and removed["state"] not in ("available", "partial"):
                 state = "error"
             db.execute(
-                """INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT (root_id, relative, kind) DO UPDATE SET
                        first_seen = min(entries.first_seen, excluded.first_seen)""",
                 (other["id"], relative, parent, entry["name"], entry["volume_path"], entry["kind"],
                  entry["extension"], entry["size"], entry["modified"], entry["first_seen"],
-                 entry["title"], entry["author"], state),
+                 entry["title"], entry["author"], state, entry["title_source"], entry["author_source"]),
             )
             if state != "missing":
                 # A nested source has no entry for its own root directory.
@@ -389,7 +390,7 @@ class Catalogue:
                     parent = os.path.dirname(parent)
 
         db.executemany(
-            """INSERT OR IGNORE INTO entries VALUES (?, ?, ?, ?, ?, 'dir', '', 0, 0, ?, '', '', 'error')""",
+            """INSERT OR IGNORE INTO entries VALUES (?, ?, ?, ?, ?, 'dir', '', 0, 0, ?, '', '', 'error', '', '')""",
             ((other["id"], parent, os.path.dirname(parent), os.path.basename(parent),
               os.path.normpath(os.path.join(other["relative"], parent)), first_seen)
              for parent, first_seen in ancestors.items()),
@@ -657,10 +658,11 @@ class Catalogue:
             applied.add(identity)
             first = old["first_seen"] if old else now
             key = os.path.normpath(os.path.join(root["relative"], relative))
-            fields = (entry.kind, entry.extension, entry.size, entry.modified, entry.title, entry.author)
+            fields = (entry.kind, entry.extension, entry.size, entry.modified, entry.title, entry.author,
+                      entry.title_source, entry.author_source)
             state = "error" if scan.is_blocked(relative) else "available"
             rows.append((root["id"], relative, os.path.dirname(relative), entry.name,
-                         key, *fields[:4], first, *fields[4:], state))
+                         key, *fields[:4], first, *fields[4:6], state, *fields[6:]))
             if entry.kind == "file":
                 if not old:
                     known = db.execute(
@@ -672,10 +674,11 @@ class Catalogue:
                     if not known:
                         summary.added.add((root["volume"], key))
                 elif old["state"] == "missing" or fields != tuple(old[column] for column in (
-                        "kind", "extension", "size", "modified", "title", "author")):
+                        "kind", "extension", "size", "modified", "title", "author",
+                        "title_source", "author_source")):
                     summary.changed.add((root["volume"], key))
 
-        db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         updates = []
         for (relative, kind), old in previous.items():
             if (relative, kind) in applied:
