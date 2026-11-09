@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from .backups import CatalogueSession, prepare_restore, restore_backup, save_backup
 from .book_metadata import BOOK_EXTENSIONS
 from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
@@ -153,10 +154,13 @@ class ScanWindow(tk.Toplevel):
 
 
 class App(ttk.Frame):
-    def __init__(self, window, catalogue):
+    def __init__(self, window, catalogue, session=None):
         super().__init__(window, padding=12)
         self.window = window
         self.catalogue = catalogue
+        self.session = session if session is not None else CatalogueSession(catalogue.filename)
+        self.owns_session = session is None
+        self.archive_running = False
         self.collections = []
         self.collection_items = {}
         self.active_collection = None
@@ -204,6 +208,12 @@ class App(ttk.Frame):
 
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 8))
+        self.catalogue_button = ttk.Menubutton(libraries, text="Catalogue")
+        menu = tk.Menu(self.catalogue_button, tearoff=False)
+        menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
+        menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
+        self.catalogue_button.configure(menu=menu)
+        self.catalogue_button.pack(side="left", padx=(0, 5))
         self.new_button = ttk.Button(top, text="Nouvelle collection", command=self.new_collection)
         self.manage_button = ttk.Menubutton(top, text="Gérer la collection")
         self.manage_menu = tk.Menu(self.manage_button, tearoff=False)
@@ -270,12 +280,10 @@ class App(ttk.Frame):
         labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
         self.sort_choice.configure(values=labels)
-        saved_widths = self.catalogue.column_widths()
-        for column, width, minimum in zip(
-            columns, (235, 155, 85, 85, 125, 145, 105), (95, 95, 64, 65, 92, 105, 80)
-        ):
-            self.table.column(column, width=max(minimum, saved_widths.get(column, width)),
-                              minwidth=minimum, stretch=False)
+        self.default_widths = dict(zip(columns, (235, 155, 85, 85, 125, 145, 105)))
+        for column, minimum in zip(columns, (95, 95, 64, 65, 92, 105, 80)):
+            self.table.column(column, minwidth=minimum, stretch=False)
+        self.load_column_widths()
         self.table.bind("<ButtonPress-1>", self.begin_column_resize)
         self.table.bind("<ButtonRelease-1>", self.end_column_resize)
         self.update_headings()
@@ -419,6 +427,8 @@ class App(ttk.Frame):
         self.load_children(self.tree.focus())
 
     def select_scope(self, _event=None):
+        if self.archive_running:
+            return
         selected = self.tree.selection()
         node = selected[0] if selected else ""
         self.scope = self.nodes.get(node)
@@ -487,6 +497,12 @@ class App(ttk.Frame):
             self.after_cancel(self.pending_search)
         self.pending_search = self.after(180, self.refresh_results)
 
+    def load_column_widths(self):
+        saved = self.catalogue.column_widths()
+        for column, width in self.default_widths.items():
+            self.table.column(column, width=max(self.table.column(column, "minwidth"),
+                                                saved.get(column, width)))
+
     def result_widths(self):
         return {column: self.table.column(column, "width") for column in self.headings}
 
@@ -501,6 +517,8 @@ class App(ttk.Frame):
             self.after_idle(self.save_column_resize, before)
 
     def save_column_resize(self, before):
+        if self.archive_running:
+            return
         changed = {column: width for column, width in self.result_widths().items()
                    if width != before[column]}
         self.pending_widths.update(changed)
@@ -542,6 +560,8 @@ class App(ttk.Frame):
         if self.pending_search is not None:
             self.after_cancel(self.pending_search)
             self.pending_search = None
+        if self.archive_running:
+            return
         if reset:
             self.page = 0
         self.table.delete(*self.table.get_children())
@@ -668,7 +688,7 @@ class App(ttk.Frame):
 
     @property
     def busy(self):
-        return self.scanning or self.duplicate_window is not None
+        return self.archive_running or self.scanning or self.duplicate_window is not None
 
     def open_duplicates(self):
         if self.busy:
@@ -694,8 +714,11 @@ class App(ttk.Frame):
 
     def update_buttons(self):
         active = not self.busy
+        self.catalogue_button.configure(state="normal" if active else "disabled")
         self.duplicate_button.configure(state="normal" if active else "disabled")
-        self.extension_button.configure(state="normal" if self.duplicate_window is None else "disabled")
+        self.extension_button.configure(
+            state="disabled" if self.archive_running or self.duplicate_window is not None else "normal"
+        )
         collection = self.collection_id()
         for button in self.library_buttons.values():
             button.configure(state="normal" if active else "disabled")
@@ -923,6 +946,122 @@ class App(ttk.Frame):
         if self.scanning:
             self.after(75, self.poll_scan)
 
+    def save_catalogue(self):
+        if self.busy:
+            return
+        filename = filedialog.asksaveasfilename(
+            parent=self, title="Sauvegarder le catalogue", defaultextension=".sqlite3",
+            initialfile=f"ma-librarie-{datetime.now():%Y-%m-%d_%H-%M-%S}.sqlite3",
+            filetypes=[("Sauvegarde Ma Librarie", "*.sqlite3"), ("Tous les fichiers", "*.*")],
+            confirmoverwrite=False,
+        )
+        if not filename:
+            return
+        overwrite = Path(filename).exists()
+        if overwrite and not messagebox.askyesno(
+            "Sauvegarder le catalogue", f"Remplacer le fichier « {Path(filename).name} » ?",
+            parent=self, default="no"
+        ):
+            return
+        self.run_catalogue_task(
+            "Sauvegarde du catalogue…",
+            lambda: save_backup(self.catalogue, filename, overwrite=overwrite),
+            lambda path: self.status.set(f"Sauvegarde créée — {path}"),
+        )
+
+    def restore_catalogue(self):
+        if self.busy:
+            return
+        filename = filedialog.askopenfilename(
+            parent=self, title="Restaurer une sauvegarde",
+            filetypes=[("Sauvegarde Ma Librarie", "*.sqlite3"), ("Tous les fichiers", "*.*")],
+        )
+        if filename:
+            self.run_catalogue_task(
+                "Validation de la sauvegarde…",
+                lambda: prepare_restore(self.catalogue, filename),
+                self.confirm_restore,
+            )
+
+    def confirm_restore(self, prepared):
+        if not messagebox.askyesno(
+            "Restaurer une sauvegarde",
+            f"« {prepared.name} »\n{prepared.collections} collection(s), {prepared.roots} source(s).\n\n"
+            "Le catalogue courant sera remplacé. Une copie de sécurité de son état actuel sera créée.\n\n"
+            "Restaurer cette sauvegarde ?",
+            parent=self, default="no"
+        ):
+            prepared.close()
+            self.status.set("Restauration annulée.")
+            return
+
+        def restore():
+            try:
+                return restore_backup(self.catalogue, prepared, self.session)
+            finally:
+                prepared.close()
+
+        self.run_catalogue_task("Restauration du catalogue…", restore, self.reload_restored_catalogue)
+
+    def run_catalogue_task(self, caption, work, success):
+        self.archive_running = True
+        self.status.set(caption)
+        self.update_buttons()
+        progress = tk.Toplevel(self.window)
+        progress.title("Catalogue")
+        progress.transient(self.window)
+        progress.resizable(False, False)
+        progress.protocol("WM_DELETE_WINDOW", lambda: None)
+        ttk.Label(progress, text=caption, padding=12).pack()
+        bar = ttk.Progressbar(progress, mode="indeterminate", length=270)
+        bar.pack(padx=12, pady=(0, 12))
+        bar.start()
+        progress.update_idletasks()
+        if progress.winfo_viewable():
+            progress.grab_set()
+            progress.focus_set()
+
+        replies = queue.SimpleQueue()
+
+        def worker():
+            try:
+                replies.put((True, work()))
+            except Exception as exc:
+                replies.put((False, str(exc) or type(exc).__name__))
+
+        def poll():
+            try:
+                ok, result = replies.get_nowait()
+            except queue.Empty:
+                self.after(50, poll)
+                return
+            bar.stop()
+            progress.destroy()
+            self.archive_running = False
+            self.update_buttons()
+            if ok:
+                success(result)
+            else:
+                self.status.set(f"Opération interrompue — {result}")
+                messagebox.showerror("Catalogue", result, parent=self)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(50, poll)
+
+    def reload_restored_catalogue(self, safety):
+        self.errors = []
+        self.error_button.state(["disabled"])
+        self.sort = "Nom", False
+        self.update_headings()
+        self.load_column_widths()
+        self.library.set(UNCLASSIFIED if self.catalogue.collections(UNCLASSIFIED) else "books")
+        self.view_mode.set(self.catalogue.results_view())
+        self.query.set("")
+        self.load_collections()
+        self.apply_results_view()
+        self.update_details()
+        self.status.set(f"Catalogue restauré. Copie de sécurité — {safety}")
+
     def show_errors(self):
         window = tk.Toplevel(self)
         window.title("Erreurs de synchronisation")
@@ -934,7 +1073,14 @@ class App(ttk.Frame):
         text.insert("1.0", "\n\n".join(self.errors))
         text.configure(state="disabled")
 
+    def destroy(self):
+        if self.owns_session:
+            self.session.close()
+        super().destroy()
+
     def close(self):
+        if self.archive_running:
+            return
         if self.duplicate_window is not None:
             self.duplicate_window.request_close()
             return
@@ -951,11 +1097,19 @@ def main():
     window.title("Ma Librarie")
     window.geometry("1130x680")
     window.minsize(850, 480)
+    session = None
     try:
-        catalogue = Catalogue(Path(os.environ["LOCALAPPDATA"]) / "MaLibrarie" / "catalogue.sqlite3")
-    except (KeyError, OSError, sqlite3.Error) as exc:
+        filename = Path(os.environ["LOCALAPPDATA"]) / "MaLibrarie" / "catalogue.sqlite3"
+        session = CatalogueSession(filename)
+        catalogue = Catalogue(filename)
+    except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+        if session is not None:
+            session.close()
         messagebox.showerror("Ma Librarie", f"Impossible d’ouvrir le catalogue : {exc}", parent=window)
         window.destroy()
         return
-    App(window, catalogue)
-    window.mainloop()
+    try:
+        App(window, catalogue, session)
+        window.mainloop()
+    finally:
+        session.close()

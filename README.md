@@ -66,6 +66,16 @@ La vue dédiée affiche les groupes ouverts, avec le nom, le chemin complet, la 
 
 Le contrôle lit les fichiers à la demande. Il utilise leur taille actuelle et une empreinte SHA-256, puis confirme l’égalité octet par octet. Chaque emplacement compte une fois, même si plusieurs collections le référencent.
 
+## Sauvegarder et restaurer le catalogue
+
+Le menu **Catalogue** s’applique à toutes les bibliothèques, même depuis un catalogue vide. **Sauvegarder le catalogue…** propose un fichier SQLite daté à l’emplacement de votre choix. Il contient l’inventaire, les collections, les sources, les métadonnées, les premières détections, les filtres et les réglages mémorisés. Les médias et les images restent dans leurs dossiers. Le chemin du fichier créé s’affiche en bas de la fenêtre.
+
+**Restaurer une sauvegarde…** vérifie le fichier puis affiche son nom et les nombres de collections et de sources. Fermez les autres instances de Ma Librarie avant de confirmer. L’application vérifie une copie de sécurité du catalogue courant avant de remplacer ses données, puis recharge la fenêtre sans réinventaire. Les contrôles existants sur l’identité et la disponibilité des volumes continuent de s’appliquer.
+
+Cette version accepte le format de sauvegarde Ma Librarie **1**, créé à partir de ML-010, y compris les copies de sécurité. Pour sauvegarder un catalogue d’une version antérieure, ouvrez-le avec ML-010 puis utilisez le menu **Catalogue**.
+
+Pour revenir à l’état précédent, restaurez le fichier **catalogue-avant-restauration-*.sqlite3** dont le chemin est indiqué dans l’interface. Si l’application ne démarre plus, fermez toutes ses instances. Dans **%LOCALAPPDATA%\MaLibrarie**, déplacez **catalogue.sqlite3** et ses éventuels compagnons **catalogue.sqlite3-wal**, **catalogue.sqlite3-shm** et **catalogue.sqlite3-journal** ensemble dans un dossier à part. Copiez ensuite le fichier de sécurité dans **%LOCALAPPDATA%\MaLibrarie** sous le nom **catalogue.sqlite3**, puis relancez l’application.
+
 ## Tests
 
 Exécutez la suite dans une session Windows de bureau avec Tkinter.
@@ -74,4 +84,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md) · [Rapport de recette ML-010](reports/ML-010_sauvegarde_restauration.md)
