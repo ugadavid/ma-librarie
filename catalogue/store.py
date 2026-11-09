@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS entries (
     author_source TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (root_id, relative, kind)
 );
+CREATE TABLE IF NOT EXISTS ui_preferences (
+    name TEXT PRIMARY KEY, value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS column_widths (
     column_name TEXT PRIMARY KEY, width INTEGER NOT NULL CHECK (width > 0)
 );
@@ -275,6 +278,19 @@ class Catalogue:
             "UPDATE catalogue_ids SET last_id = last_id + 1 WHERE kind = ? RETURNING last_id",
             (kind,),
         ).fetchone()[0]
+
+    def results_view(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM ui_preferences WHERE name = 'results_view'").fetchone()
+        return "detail" if row and row["value"] == "detail" else "list"
+
+    def save_results_view(self, mode):
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO ui_preferences (name, value) VALUES ('results_view', ?)
+                   ON CONFLICT (name) DO UPDATE SET value = excluded.value""",
+                (mode,),
+            )
 
     def column_widths(self):
         with self.connect() as db:

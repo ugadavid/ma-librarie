@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .book_metadata import BOOK_EXTENSIONS
+from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .windows import explorer_target, select_in_explorer
@@ -177,6 +178,8 @@ class App(ttk.Frame):
         self.pending_search = None
         self.selected_extensions = None
         self.scope = None
+        self.view_mode = tk.StringVar(window, value=catalogue.results_view())
+        self.detail_layout_pending = False
         self.pack(fill="both", expand=True)
         self.build()
         self.load_collections()
@@ -239,10 +242,21 @@ class App(ttk.Frame):
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
-        self.scope_label = ttk.Label(results, text="")
-        self.scope_label.pack(anchor="w")
+        result_header = ttk.Frame(results)
+        result_header.pack(fill="x")
+        for label, mode in (("Détail", "detail"), ("Liste", "list")):
+            ttk.Radiobutton(result_header, text=label, value=mode, variable=self.view_mode,
+                            command=self.change_results_view).pack(side="right", padx=(6, 0))
+        self.scope_label = ttk.Label(result_header, text="", wraplength=450)
+        self.scope_label.pack(side="left")
+        self.result_panes = ttk.Panedwindow(results, orient="horizontal")
+        self.result_panes.pack(fill="both", expand=True)
+        self.result_panes.bind("<Configure>", self.layout_detail)
+        result_list = ttk.Frame(self.result_panes)
+        self.result_panes.add(result_list, weight=1)
+        self.detail_pane = DetailPane(self.result_panes)
         columns = ("name", "collections", "extension", "size", "modified", "detected", "state")
-        self.table = self.scroll_tree(results, columns=columns, show="headings")
+        self.table = self.scroll_tree(result_list, columns=columns, show="headings")
         labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
         saved_widths = self.catalogue.column_widths()
@@ -256,7 +270,7 @@ class App(ttk.Frame):
         self.update_headings()
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
         self.table.bind("<Button-3>", self.show_file_menu)
-        navigation = ttk.Frame(results)
+        navigation = ttk.Frame(result_list)
         navigation.pack(fill="x")
         self.previous = ttk.Button(navigation, text="Précédent", command=lambda: self.move_page(-1))
         self.next = ttk.Button(navigation, text="Suivant", command=lambda: self.move_page(1))
@@ -265,20 +279,21 @@ class App(ttk.Frame):
         self.page_label = ttk.Label(navigation)
         self.page_label.pack(side="left", padx=6)
 
-        details = ttk.Frame(self, padding=(0, 8))
+        details = self.list_details = ttk.Frame(self, padding=(0, 8))
         details.pack(fill="x")
         self.details = tk.StringVar()
         ttk.Label(details, textvariable=self.details, wraplength=980).pack(anchor="w")
         self.full_path = tk.StringVar()
         ttk.Entry(details, textvariable=self.full_path, state="readonly").pack(fill="x", pady=4)
 
-        bottom = ttk.Frame(self)
+        bottom = self.bottom = ttk.Frame(self)
         bottom.pack(fill="x")
         self.status = tk.StringVar(value="Prêt")
         ttk.Label(bottom, textvariable=self.status, wraplength=825).pack(side="left")
         self.error_button = ttk.Button(bottom, text="Voir les erreurs", command=self.show_errors)
         self.error_button.pack(side="right")
         self.error_button.state(["disabled"])
+        self.apply_results_view()
 
     @staticmethod
     def scroll_tree(parent, **options):
@@ -545,9 +560,42 @@ class App(ttk.Frame):
         selected = self.table.selection()
         return self.rows.get(selected[0]) if selected else None
 
+    def change_results_view(self):
+        try:
+            self.catalogue.save_results_view(self.view_mode.get())
+        except sqlite3.Error as exc:
+            messagebox.showerror("Vue des résultats", str(exc), parent=self)
+        self.apply_results_view()
+        self.update_details()
+        if self.table.selection():
+            self.table.focus(self.table.selection()[0])
+            self.table.focus_set()
+
+    def apply_results_view(self):
+        attached = str(self.detail_pane) in self.result_panes.panes()
+        if self.view_mode.get() == "detail" and not attached:
+            self.list_details.pack_forget()
+            self.result_panes.add(self.detail_pane, weight=1)
+            self.result_panes.update_idletasks()
+            self.detail_layout_pending = True
+            self.layout_detail()
+        elif self.view_mode.get() == "list" and attached:
+            self.detail_pane.hide()
+            self.result_panes.forget(self.detail_pane)
+            self.list_details.pack(fill="x", before=self.bottom)
+
+    def layout_detail(self, _event=None):
+        width = self.result_panes.winfo_width()
+        if (self.detail_layout_pending and width >= 200
+                and str(self.detail_pane) in self.result_panes.panes()):
+            self.result_panes.sashpos(0, int(width * 0.54))
+            self.detail_layout_pending = False
+
     def update_details(self):
         row = self.selected_file()
         self.full_path.set(row["full_path"] if row else "")
+        metadata = []
+        state = ""
         if row:
             state = self.file_state(row)
             root_state = STATES[row["root_state"]]
@@ -561,6 +609,9 @@ class App(ttk.Frame):
             self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
+        if self.view_mode.get() == "detail":
+            books = self.library.get() == "books" and row is not None and row["extension"] in BOOK_EXTENSIONS
+            self.detail_pane.show(row, metadata, state, books)
         self.update_buttons()
 
     @property

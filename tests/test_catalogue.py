@@ -1,3 +1,4 @@
+import io
 import os
 import sqlite3
 import subprocess
@@ -10,7 +11,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from catalogue import book_metadata, duplicates, store
+from catalogue import book_metadata, covers, duplicates, store
 from catalogue.ui import App, EXTENSION_PRESETS
 from catalogue.windows import Location, SourceProblem, explorer_target, locate
 
@@ -30,6 +31,27 @@ def epub(path):
               </metadata>
             </package>
         """)
+
+
+def covered_epub(path, data, legacy=False):
+    declaration = '<meta name="cover" content="img"/>' if legacy else ""
+    properties = "" if legacy else ' properties="cover-image"'
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("META-INF/container.xml", """
+            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles>
+            </container>
+        """)
+        archive.writestr("OPS/book.opf", f"""
+            <package xmlns="http://www.idpf.org/2007/opf">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Le livre illustré</dc:title><dc:creator>Auteur témoin</dc:creator>
+                {declaration}
+              </metadata>
+              <manifest><item id="img" href="../Images/couverture%20bleue.png"{properties}/></manifest>
+            </package>
+        """)
+        archive.writestr("Images/couverture bleue.png", data)
 
 
 @unittest.skipUnless(os.name == "nt", "Le catalogue utilise les volumes Windows.")
@@ -1053,6 +1075,94 @@ class CatalogueTests(unittest.TestCase):
         self.db.synchronize(self.collection)
         row, = self.db.search(self.collection, "ferme", "pdf")
         self.assertEqual(("", ""), (row["title"], row["author"]))
+
+    @unittest.skipIf(covers.Image is None, "Installer les dépendances de couverture.")
+    def test_cover_priority_fallback_and_ambiguous_generic(self):
+        image = self.nested / "Ubik.PNG"
+        covers.Image.new("RGB", (300, 600), "blue").save(image)
+        (self.nested / "UBIK.JpG").write_bytes(b"image illisible")
+        covered_epub(self.book, image.read_bytes(), legacy=True)
+        generic = self.nested / "COVER.JPG"
+        covers.Image.new("RGB", (200, 100), "red").save(generic)
+        other = self.nested / "Autre ouvrage.mobi"
+        other.touch()
+        self.db.synchronize(self.collection)
+        row, = self.db.search(self.collection, "Ubik", extension="epub")
+        data, source = covers.load_cover(row)
+        self.assertEqual("Image de même nom", source)
+        with covers.Image.open(io.BytesIO(data)) as thumbnail:
+            self.assertEqual(245, thumbnail.height)
+            self.assertAlmostEqual(thumbnail.height / 2, thumbnail.width, delta=1)
+
+        image.unlink()
+        self.assertEqual("Couverture intégrée à l’EPUB", covers.load_cover(row)[1])
+        other_row, = self.db.search(self.collection, "Autre ouvrage", extension="mobi")
+        self.assertIsNone(covers.load_cover(other_row)[0])
+        (self.nested / "metadata.opf").write_text(
+            '<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<metadata><dc:title>Autre ouvrage</dc:title></metadata></package>', encoding="utf-8",
+        )
+        self.assertEqual("Couverture générique associée", covers.load_cover(other_row)[1])
+        self.books.rename(self.books.with_name("Débranché"))
+        self.assertIn("hors ligne", covers.load_cover(row)[1])
+        self.assertIsNone(covers.archive_reference("OPS/book.opf", "../../cover.png"))
+        self.assertIsNone(covers.archive_reference("OPS/book.opf", "https://example.invalid/cover.jpg"))
+
+    def test_detail_ignores_stale_cover_and_restores_view_mode(self):
+        self.db.move_collection(self.collection, "books")
+        second = self.books / "Un autre titre.pdf"
+        second.touch()
+        self.db.synchronize(self.collection)
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.geometry("1200x620")
+        app = App(window, self.db)
+        window.update()
+        ids = {row["name"]: item for item, row in app.rows.items()}
+        started = threading.Event()
+        release = threading.Event()
+
+        def load(row):
+            if row["name"] == self.book.name:
+                started.set()
+                release.wait(5)
+                return None, "ancienne couverture"
+            return None, "nouvelle couverture"
+
+        def wait_for(predicate):
+            deadline = time.monotonic() + 5
+            while not predicate() and time.monotonic() < deadline:
+                window.update()
+                time.sleep(0.02)
+            self.assertTrue(predicate())
+
+        with patch("catalogue.detail_pane.load_cover", side_effect=load):
+            app.table.selection_set(ids[self.book.name])
+            app.view_mode.set("detail")
+            app.change_results_view()
+            wait_for(started.is_set)
+            self.assertTrue(app.detail_pane.winfo_ismapped())
+            self.assertEqual(ids[self.book.name], app.table.selection()[0])
+            try:
+                app.table.selection_set(ids[second.name])
+                window.update()
+                self.assertEqual(str(second), app.detail_pane.path.get())
+                self.assertEqual(second.name, app.detail_pane.title.cget("text"))
+                wait_for(lambda: app.detail_pane.pending is not None)
+            finally:
+                release.set()
+            wait_for(lambda: app.detail_pane.cover_status.cget("text") == "nouvelle couverture")
+
+        app.apply_extensions(None, {"mobi"}, library="books")
+        window.update()
+        self.assertFalse(app.table.selection())
+        self.assertEqual("", app.detail_pane.path.get())
+        self.assertEqual("Sélectionnez un résultat.", app.detail_pane.title.cget("text"))
+        app.destroy()
+        reopened = App(window, store.Catalogue(self.filename))
+        window.update()
+        self.assertEqual("detail", reopened.view_mode.get())
+        self.assertIn(str(reopened.detail_pane), reopened.result_panes.panes())
 
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()

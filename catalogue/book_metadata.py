@@ -60,6 +60,18 @@ def opf_fields(package):
     )
 
 
+def epub_package(book):
+    with book.open("META-INF/container.xml") as container:
+        package = read_xml(container).find(f".//{{{PACKAGE_NS}}}rootfile")
+    if package is None:
+        raise MetadataError("Paquet EPUB introuvable.")
+    name = package.attrib["full-path"]
+    if any(part in ("", ".", "..") for part in name.split("/")) or ":" in name or "\\" in name:
+        raise MetadataError("Référence de paquet EPUB non locale.")
+    with book.open(name) as opf:
+        return name, read_xml(opf)
+
+
 def epub_metadata(path):
     try:
         with path.open("rb") as stream:
@@ -68,15 +80,8 @@ def epub_metadata(path):
                 raise MetadataError("EPUB trop volumineux pour l’extraction.")
             stream.seek(0)
             with zipfile.ZipFile(stream) as book:
-                with book.open("META-INF/container.xml") as container:
-                    package = read_xml(container).find(f".//{{{PACKAGE_NS}}}rootfile")
-                if package is None:
-                    raise MetadataError("Paquet EPUB introuvable.")
-                name = package.attrib["full-path"]
-                if any(part in ("", ".", "..") for part in name.split("/")) or ":" in name or "\\" in name:
-                    raise MetadataError("Référence de paquet EPUB non locale.")
-                with book.open(name) as opf:
-                    return opf_fields(read_xml(opf))
+                _, package = epub_package(book)
+                return opf_fields(package)
     except (KeyError, zipfile.BadZipFile, EOFError, RuntimeError, zlib.error) as exc:
         raise MetadataError(str(exc)) from exc
 
