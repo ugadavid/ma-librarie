@@ -282,7 +282,7 @@ class Catalogue:
     def results_view(self):
         with self.connect() as db:
             row = db.execute("SELECT value FROM ui_preferences WHERE name = 'results_view'").fetchone()
-        return "detail" if row and row["value"] == "detail" else "list"
+        return row["value"] if row and row["value"] in ("detail", "mosaic") else "list"
 
     def save_results_view(self, mode):
         with self.connect() as db:

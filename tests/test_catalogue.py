@@ -1164,6 +1164,97 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual("detail", reopened.view_mode.get())
         self.assertIn(str(reopened.detail_pane), reopened.result_panes.panes())
 
+    def test_mosaic_shares_selection_order_and_file_menu(self):
+        self.db.move_collection(self.collection, "books")
+        self.db.synchronize(self.collection)
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.geometry("1250x640")
+        app = App(window, self.db)
+        window.update()
+        original = tuple(app.rows)
+        app.table.selection_set(original[0])
+        app.view_mode.set("mosaic")
+        app.change_results_view()
+        window.update()
+        self.assertTrue(app.mosaic.canvas.winfo_ismapped())
+        self.assertEqual(original, tuple(item for item, _ in app.mosaic.entries))
+        self.assertEqual(original[0], app.mosaic.selected)
+        self.assertGreaterEqual(app.mosaic.columns, 2)
+        second = original[1]
+        card = app.mosaic.tiles[second][0]
+        x, y, _, _ = app.mosaic.canvas.coords(card)
+        with patch.object(tk.Menu, "tk_popup") as popup:
+            app.mosaic.canvas.event_generate("<Button-3>", x=int(x + 10), y=int(y + 10))
+        popup.assert_called_once()
+        app.file_menu.invoke(0)
+        self.assertEqual(app.rows[second]["full_path"], window.clipboard_get())
+        self.assertEqual((original[0],), app.table.selection())
+
+        app.sort_choice.set("Taille")
+        app.sort_choice.event_generate("<<ComboboxSelected>>")
+        window.update()
+        self.assertEqual(("Taille", False), app.sort)
+        self.assertEqual(sorted(row["size"] for row in app.rows.values()),
+                         [row["size"] for _, row in app.mosaic.entries])
+        app.sort_direction.invoke()
+        self.assertEqual(("Taille", True), app.sort)
+        selected = next(iter(app.rows))
+        app.select_tile(selected)
+        app.view_mode.set("detail")
+        app.change_results_view()
+        window.update()
+        self.assertEqual((selected,), app.table.selection())
+        self.assertEqual(app.rows[selected]["full_path"], app.detail_pane.path.get())
+
+    @unittest.skipIf(covers.Image is None, "Installer les dépendances de couverture.")
+    def test_mosaic_ignores_image_from_previous_search(self):
+        self.db.move_collection(self.collection, "books")
+        self.db.synchronize(self.collection)
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        app = App(window, self.db)
+        window.update()
+        started = threading.Event()
+        release = threading.Event()
+
+        def load(row, *, size):
+            old = row["name"] == "Guide.pdf"
+            if old:
+                started.set()
+                release.wait(5)
+            image = covers.Image.new("RGB", size, "red" if old else "blue")
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            return output.getvalue(), ""
+
+        def wait_for(predicate):
+            deadline = time.monotonic() + 5
+            while not predicate() and time.monotonic() < deadline:
+                window.update()
+                time.sleep(0.015)
+            self.assertTrue(predicate())
+
+        with patch("catalogue.mosaic.load_cover", side_effect=load) as loader:
+            app.query.set("Guide")
+            app.refresh_results()
+            app.view_mode.set("mosaic")
+            app.change_results_view()
+            try:
+                wait_for(started.is_set)
+                app.query.set("Ubik")
+                app.refresh_results()
+                window.update()
+                self.assertEqual(1, loader.call_count)
+                self.assertFalse(app.mosaic.images)
+            finally:
+                release.set()
+            current, = app.rows
+            wait_for(lambda: current in app.mosaic.images)
+            self.assertEqual({current}, set(app.mosaic.images))
+            self.assertEqual((0, 0, 255), app.mosaic.images[current].get(10, 10))
+        self.assertEqual("mosaic", store.Catalogue(self.filename).results_view())
+
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()
         self.addCleanup(window.destroy)

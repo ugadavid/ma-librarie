@@ -26,7 +26,7 @@ IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 DIRECTORY_LIMIT = 4096
 
 
-def thumbnail(stream):
+def thumbnail(stream, size):
     data = stream.read(IMAGE_BYTES + 1)
     if len(data) > IMAGE_BYTES:
         return None
@@ -35,7 +35,7 @@ def thumbnail(stream):
             if image.width * image.height > IMAGE_PIXELS or max(image.size) > 8192:
                 return None
             image = ImageOps.exif_transpose(image)
-            image.thumbnail(THUMBNAIL_SIZE)
+            image.thumbnail(size)
             result = io.BytesIO()
             image.convert("RGBA").save(result, format="PNG")
             return result.getvalue()
@@ -60,7 +60,7 @@ def archive_reference(package_name, href):
     return member
 
 
-def epub_cover(path):
+def epub_cover(path, size):
     try:
         with path.open("rb") as stream:
             stream.seek(0, os.SEEK_END)
@@ -84,7 +84,7 @@ def epub_cover(path):
                         continue
                     try:
                         with book.open(member) as cover:
-                            if data := thumbnail(cover):
+                            if data := thumbnail(cover, size):
                                 return data
                     except (KeyError, OSError, RuntimeError, EOFError, zlib.error):
                         continue
@@ -115,7 +115,7 @@ def siblings(folder):
     return names, complete
 
 
-def load_cover(row):
+def load_cover(row, *, size=THUMBNAIL_SIZE):
     if Image is None:
         return None, "Couvertures indisponibles sans Pillow."
 
@@ -135,7 +135,7 @@ def load_cover(row):
     def local_image(name):
         try:
             with sibling_path(name).open("rb") as stream:
-                return thumbnail(stream)
+                return thumbnail(stream, size)
         except OSError:
             return None
 
@@ -152,7 +152,7 @@ def load_cover(row):
             return data, "Image de même nom"
 
     if row["extension"] == "epub":
-        if data := epub_cover(path):
+        if data := epub_cover(path, size):
             return data, "Couverture intégrée à l’EPUB"
 
     if complete:

@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from .book_metadata import BOOK_EXTENSIONS
 from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
+from .mosaic import Mosaic
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .windows import explorer_target, select_in_explorer
 
@@ -244,11 +245,20 @@ class App(ttk.Frame):
 
         result_header = ttk.Frame(results)
         result_header.pack(fill="x")
-        for label, mode in (("Détail", "detail"), ("Liste", "list")):
+        for label, mode in (("Mosaïque", "mosaic"), ("Détail", "detail"), ("Liste", "list")):
             ttk.Radiobutton(result_header, text=label, value=mode, variable=self.view_mode,
                             command=self.change_results_view).pack(side="right", padx=(6, 0))
         self.scope_label = ttk.Label(result_header, text="", wraplength=450)
         self.scope_label.pack(side="left")
+        self.mosaic_sort = ttk.Frame(results)
+        ttk.Label(self.mosaic_sort, text="Trier par").pack(side="left")
+        self.sort_choice = ttk.Combobox(self.mosaic_sort, width=19, state="readonly")
+        self.sort_choice.pack(side="left", padx=5)
+        self.sort_choice.bind("<<ComboboxSelected>>", self.sort_mosaic)
+        self.sort_direction = ttk.Button(self.mosaic_sort, width=12,
+                                         command=lambda: self.sort_by(self.sort[0]))
+        self.sort_direction.pack(side="left")
+        self.mosaic = Mosaic(results, self.select_tile, self.show_tile_menu, self.file_state)
         self.result_panes = ttk.Panedwindow(results, orient="horizontal")
         self.result_panes.pack(fill="both", expand=True)
         self.result_panes.bind("<Configure>", self.layout_detail)
@@ -259,6 +269,7 @@ class App(ttk.Frame):
         self.table = self.scroll_tree(result_list, columns=columns, show="headings")
         labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
+        self.sort_choice.configure(values=labels)
         saved_widths = self.catalogue.column_widths()
         for column, width, minimum in zip(
             columns, (235, 155, 85, 85, 125, 145, 105), (95, 95, 64, 65, 92, 105, 80)
@@ -270,7 +281,7 @@ class App(ttk.Frame):
         self.update_headings()
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
         self.table.bind("<Button-3>", self.show_file_menu)
-        navigation = ttk.Frame(result_list)
+        navigation = self.navigation = ttk.Frame(results)
         navigation.pack(fill="x")
         self.previous = ttk.Button(navigation, text="Précédent", command=lambda: self.move_page(-1))
         self.next = ttk.Button(navigation, text="Suivant", command=lambda: self.move_page(1))
@@ -514,6 +525,8 @@ class App(ttk.Frame):
 
     def update_headings(self):
         active, descending = self.sort
+        self.sort_choice.set(active)
+        self.sort_direction.configure(text="Décroissant" if descending else "Croissant")
         for column, label in self.headings.items():
             arrow = (" ▼" if descending else " ▲") if label == active else ""
             display = "Taille (o)" if label == "Taille" else label
@@ -548,6 +561,8 @@ class App(ttk.Frame):
         self.previous.configure(state="normal" if self.page else "disabled")
         self.next.configure(state="normal" if len(rows) > PAGE_SIZE else "disabled")
         self.page_label.configure(text=f"Page {self.page + 1}" if rows else "Aucun résultat")
+        if self.view_mode.get() == "mosaic":
+            self.show_mosaic_page()
         self.update_details()
 
     @staticmethod
@@ -567,22 +582,56 @@ class App(ttk.Frame):
             messagebox.showerror("Vue des résultats", str(exc), parent=self)
         self.apply_results_view()
         self.update_details()
-        if self.table.selection():
+        if self.view_mode.get() == "mosaic":
+            self.mosaic.canvas.focus_set()
+        elif self.table.selection():
             self.table.focus(self.table.selection()[0])
             self.table.focus_set()
 
     def apply_results_view(self):
+        mode = self.view_mode.get()
         attached = str(self.detail_pane) in self.result_panes.panes()
-        if self.view_mode.get() == "detail" and not attached:
-            self.list_details.pack_forget()
-            self.result_panes.add(self.detail_pane, weight=1)
-            self.result_panes.update_idletasks()
-            self.detail_layout_pending = True
-            self.layout_detail()
-        elif self.view_mode.get() == "list" and attached:
+        if mode != "detail" and attached:
             self.detail_pane.hide()
             self.result_panes.forget(self.detail_pane)
+        if mode == "mosaic":
+            self.result_panes.pack_forget()
+            self.mosaic_sort.pack(fill="x", before=self.navigation)
+            self.mosaic.pack(fill="both", expand=True, before=self.navigation)
+            self.show_mosaic_page()
+        else:
+            self.mosaic.hide()
+            self.mosaic.pack_forget()
+            self.mosaic_sort.pack_forget()
+            self.result_panes.pack(fill="both", expand=True, before=self.navigation)
+
+        if mode == "detail":
+            self.list_details.pack_forget()
+            if not attached:
+                self.result_panes.add(self.detail_pane, weight=1)
+                self.result_panes.update_idletasks()
+                self.detail_layout_pending = True
+                self.layout_detail()
+        else:
             self.list_details.pack(fill="x", before=self.bottom)
+
+    def show_mosaic_page(self):
+        selected = self.table.selection()
+        self.mosaic.show_page(self.rows, self.library.get(), selected[0] if selected else None)
+
+    def select_tile(self, item):
+        self.table.selection_set(item)
+        self.table.focus(item)
+        self.table.see(item)
+        self.update_details()
+
+    def show_tile_menu(self, item, event):
+        self.file_menu = self.post_row_menu(self.mosaic.canvas, self.rows[item], self.file_menu, event)
+
+    def sort_mosaic(self, _event):
+        column = self.sort_choice.get()
+        if column != self.sort[0]:
+            self.sort_by(column)
 
     def layout_detail(self, _event=None):
         width = self.result_panes.winfo_width()
@@ -612,6 +661,9 @@ class App(ttk.Frame):
         if self.view_mode.get() == "detail":
             books = self.library.get() == "books" and row is not None and row["extension"] in BOOK_EXTENSIONS
             self.detail_pane.show(row, metadata, state, books)
+        elif self.view_mode.get() == "mosaic":
+            selected = self.table.selection()
+            self.mosaic.select_item(selected[0] if selected else None)
         self.update_buttons()
 
     @property
@@ -789,12 +841,15 @@ class App(ttk.Frame):
         row = rows.get(table.identify_row(event.y))
         if row is None:
             return previous
+        return self.post_row_menu(table, row, previous, event)
+
+    def post_row_menu(self, widget, row, previous, event):
         if previous is not None:
             previous.destroy()
-        menu = tk.Menu(table, tearoff=False)
+        menu = tk.Menu(widget, tearoff=False)
         menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
         menu.add_command(label="Afficher dans l’Explorateur",
-                         command=lambda: self.show_in_explorer(row, table.winfo_toplevel()))
+                         command=lambda: self.show_in_explorer(row, widget.winfo_toplevel()))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:

@@ -28,13 +28,13 @@ Les collections issues d’un ancien catalogue sont accessibles dans **À classe
 
 La première détection correspond à la date de catalogage. Le scan lit les sources et ignore les points de réanalyse, dont les jonctions, les liens symboliques et certains fichiers à la demande. Les sources sont des dossiers sur des volumes locaux identifiables par Windows.
 
-## Vue Détail et couvertures
+## Vues Liste, Détail et Mosaïque
 
-Choisissez **Liste** ou **Détail** au-dessus des résultats. La fiche s’ouvre à droite et suit la sélection, y compris avec les flèches du clavier. Le mode est mémorisé au redémarrage.
+Choisissez **Liste** ou **Détail** au-dessus des résultats. La fiche s’ouvre à droite et suit la sélection, y compris avec les flèches du clavier. Le mode est mémorisé au redémarrage. En **Mosaïque**, plusieurs tuiles affichent directement leur vignette, leur titre, leurs auteurs et leur format. Les flèches déplacent la sélection, le tri au-dessus de la grille est partagé avec le tableau et le clic droit cible la tuile sous le pointeur. Le chemin complet de la sélection reste affiché sous les résultats.
 
 Dans **Livres**, la fiche cherche d’abord une image JPG, JPEG ou PNG de même nom dans le dossier, dans cet ordre. Elle essaie ensuite la couverture déclarée dans l’EPUB, puis un **cover.jpg** associé sans ambiguïté. Le filtre des résultats ne limite pas cette recherche locale. Les images sont chargées à la sélection, en lecture seule, dans la limite de 10 Mio et 16 millions de pixels par image.
 
-Installez le décodeur facultatif avec `py -3 -m pip install -r requirements-covers.txt`. Sans Pillow, la fiche textuelle reste disponible.
+Installez le décodeur facultatif avec `py -3 -m pip install -r requirements-covers.txt`. Sans Pillow, les tuiles affichent leur texte et le badge du format, et la fiche Détail reste utilisable.
 
 ## Métadonnées de livres
 
@@ -74,4 +74,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md)
