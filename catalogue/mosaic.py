@@ -1,17 +1,20 @@
 import queue
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import font, ttk
 
 from .book_metadata import BOOK_EXTENSIONS
-from .covers import load_cover
+from .covers import ALBUM_EXTENSIONS, POSTER_EXTENSIONS, load_cover
+from .night import CARD, GOLD, INK, LINE, MUTED, PANEL, SELECTED, TEAL, TEXT
 from .work_view import format_counts, format_label
 
 
 TILE_WIDTH = 286
-ROW_HEIGHT = 110
+ROW_HEIGHT = 150
 GAP = 7
-THUMBNAIL = (64, 82)
+THUMBNAIL = (92, 126)
+ART_FORMATS = {"books": BOOK_EXTENSIONS, "movies": POSTER_EXTENSIONS, "music": ALBUM_EXTENSIONS}
 UNAVAILABLE = {"offline", "relocate", "error", "missing"}
 
 
@@ -48,12 +51,13 @@ class Mosaic(ttk.Frame):
         self.change_badge = badge
         self.open_format = open_format
         self.format_buttons = {}
-        self.canvas = tk.Canvas(self, background="#f1f4f8", highlightthickness=0, takefocus=True)
+        self.canvas = tk.Canvas(self, background=INK, highlightthickness=0, takefocus=True)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrolled)
         self.scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.canvas.bind("<Configure>", self.resize)
+        self.canvas.bind("<Map>", lambda _event: self.schedule_pump())
         self.canvas.bind("<Button-1>", self.click)
         self.canvas.bind("<Button-3>", self.context)
         self.canvas.bind("<Motion>", self.hover)
@@ -128,35 +132,35 @@ class Mosaic(ttk.Frame):
             x = (index % self.columns) * self.cell_width + GAP
             right = x + self.cell_width - 2 * GAP
             card = self.canvas.create_rectangle(x, y, right, y + ROW_HEIGHT - GAP,
-                                                fill="#ffffff", outline="#c9d2df")
-            accent = {"movies": "#ece3f7", "music": "#dcefe7"}.get(self.library, "#e3ebf7")
-            self.canvas.create_rectangle(x + 7, y + 9, x + 75, y + 94, fill=accent, outline="")
+                                                fill=CARD, outline=LINE)
+            self.canvas.create_rectangle(x + 8, y + 8, x + 103, y + 135, fill=PANEL, outline=LINE)
             format_name = row["extension"].upper() or "Sans extension"
-            badge = self.canvas.create_text(
-                x + 41, y + 51, text=fit(format_name, self.face, 61),
-                font=self.face, fill="#344861",
+            missing = {"books": "Couverture", "movies": "Affiche", "music": "Pochette"}.get(self.library, "Image")
+            fallback = self.canvas.create_text(
+                x + 55, y + 72, text=f"{missing}\nabsente", justify="center", font=self.face, fill=MUTED,
             )
-            picture = self.canvas.create_image(x + 41, y + 51)
-            label_width = max(12, int(right - x - 94))
+            picture = self.canvas.create_image(x + 55, y + 72)
+            left = x + 115
+            label_width = max(12, int(right - left - 8))
             self.canvas.create_text(
-                x + 84, y + 10, anchor="nw", font=self.title_face, fill="#18263a",
-                text=title_lines(row["title"] or row["name"], self.title_face, label_width),
+                left, y + 16, anchor="nw", font=self.title_face, fill=TEXT,
+                text=title_lines(row["title"] or Path(row["name"]).stem or row["name"], self.title_face, label_width),
             )
             self.canvas.create_text(
-                x + 84, y + 54, anchor="nw", font=self.face, fill="#344861",
+                left, y + 57, anchor="nw", font=self.face, fill=MUTED,
                 text=fit(row["author"], self.face, label_width),
             )
             if isinstance(row, dict) and "members" in row:
-                self.draw_formats(item, row["members"], x + 84, y + 72, right - 5)
+                self.draw_formats(item, row["members"], left, y + 83, right - 5)
             else:
+                self.draw_badge(left, y + 83, fit(format_name, self.face, max(12, label_width - 12)))
                 state = self.file_state(row)
-                badge = self.change_badge(row)
-                annotation = " · ".join(filter(None, (badge, format_name, state if state != "Disponible" else "")))
+                annotation = " · ".join(filter(None, (self.change_badge(row), state if state != "Disponible" else "")))
                 self.canvas.create_text(
-                    x + 84, y + 77, anchor="nw", font=self.face, fill="#344861",
+                    left, y + 111, anchor="nw", font=self.face, fill=MUTED,
                     text=fit(annotation, self.face, label_width),
                 )
-            self.tiles[item] = card, badge, picture
+            self.tiles[item] = card, fallback, picture
             self.paint_selection(item)
             if item in self.images:
                 self.paint_image(item, self.images[item])
@@ -168,13 +172,18 @@ class Mosaic(ttk.Frame):
         x, y = left, top
         for name, count in format_counts(members):
             label = format_label(name, count)
-            width = self.face.measure(label) + 10
+            width = self.face.measure(label) + 12
             if x > left and x + width > right:
-                x, y = left, y + 17
-            box = self.canvas.create_rectangle(x, y, x + width, y + 15, fill="#e5effe", outline="#9ab6de")
-            text = self.canvas.create_text(x + width / 2, y + 7, text=label, font=self.face, fill="#16416f")
+                x, y = left, y + 20
+            box, text = self.draw_badge(x, y, label)
             self.format_buttons[box] = self.format_buttons[text] = (item, name.lower())
-            x += width + 4
+            x += width + 5
+
+    def draw_badge(self, x, y, label):
+        width = self.face.measure(label) + 12
+        box = self.canvas.create_rectangle(x, y, x + width, y + 18, fill=INK, outline=GOLD)
+        text = self.canvas.create_text(x + width / 2, y + 9, text=label, font=self.face, fill=TEXT)
+        return box, text
 
     def format_at(self, event):
         x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
@@ -189,8 +198,8 @@ class Mosaic(ttk.Frame):
     def paint_selection(self, item):
         if item in self.tiles:
             selected = item in self.selection
-            self.canvas.itemconfigure(self.tiles[item][0], fill="#e2edff" if selected else "#ffffff",
-                                      outline="#225ea6" if selected else "#c9d2df",
+            self.canvas.itemconfigure(self.tiles[item][0], fill=SELECTED if selected else CARD,
+                                      outline=TEAL if selected else LINE,
                                       width=3 if item == self.selected else 2 if selected else 1)
 
     def select_item(self, item, selection):
@@ -280,10 +289,11 @@ class Mosaic(ttk.Frame):
             self.paint_image(item, None)
             del self.images[item]
             self.attempted.discard(item)
-        if self.loading or self.library != "books":
+        if self.loading:
             return
+        formats = ART_FORMATS.get(self.library, ())
         for item, row in visible:
-            if (item not in self.attempted and row["extension"] in BOOK_EXTENSIONS
+            if (item not in self.attempted and row["extension"] in formats
                     and row["root_state"] not in UNAVAILABLE and row["state"] not in UNAVAILABLE):
                 self.start_image(item, dict(row))
                 break

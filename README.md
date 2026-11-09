@@ -1,4 +1,4 @@
-# Ma Librarie
+# Ma Médiathèque
 
 Catalogue local de livres, films et autres fichiers pour Windows 11. Une collection regroupe plusieurs dossiers sources et reste consultable quand ils sont débranchés.
 
@@ -12,7 +12,9 @@ py -3 -m catalogue
 
 Python, Tkinter et SQLite couvrent l’interface, l’accès aux dossiers Windows et le stockage local avec la bibliothèque standard. Le catalogue est enregistré dans **%LOCALAPPDATA%\MaLibrarie\catalogue.sqlite3**. L’application refuse une racine qui englobe ce répertoire de données.
 
-## Bibliothèques et recherche
+## Accueil, bibliothèques et recherche
+
+L’application s’ouvre sur **Ma Médiathèque**, avec trois entrées illustrées pour **Livres**, **Films** et **Musiques**. Cliquez sur une entrée ou utilisez **Tab**, puis **Entrée** ou **Espace**. Le menu **Catalogue → Accueil** ramène aux trois entrées.
 
 Choisissez **Livres**, **Films** ou **Musiques** dans le menu **Bibliothèques**. Au clavier, ouvrez ce menu avec **Alt+B**. La vue **Tous…** recherche dans toutes les collections de cette bibliothèque. Cliquez sur une collection, une racine ou une branche pour restreindre la recherche, puis sur **Tous…** pour l’élargir à nouveau. La colonne **Collections** indique les appartenances de chaque résultat. Un chemin physique partagé apparaît une seule fois.
 
@@ -36,7 +38,9 @@ En Mosaïque, les tuiles affichent la vignette, le titre, les auteurs et le form
 
 Dans **Livres**, la fiche cherche d’abord une image JPG, JPEG ou PNG de même nom dans le dossier, dans cet ordre. Elle essaie ensuite la couverture déclarée dans l’EPUB, puis un **cover.jpg** associé sans ambiguïté. Le filtre des résultats ne limite pas cette recherche locale. Les images sont chargées à la sélection, en lecture seule, dans la limite de 10 Mio et 16 millions de pixels par image.
 
-Installez le décodeur facultatif avec `py -3 -m pip install -r requirements-covers.txt`. Sans Pillow, les tuiles affichent leur texte et le badge du format, et la fiche Détail reste utilisable.
+Dans **Films** et **Musiques**, la Mosaïque utilise une image JPG, JPEG ou PNG de même nom dans le dossier du fichier. Une vignette absente laisse le titre et le format visibles.
+
+Installez le décodeur facultatif avec `py -3 -m pip install -r requirements-covers.txt`. Sans Pillow, les tuiles affichent leur texte et le badge du format, et le volet de détails reste utilisable.
 
 ## Métadonnées de livres
 
@@ -72,7 +76,7 @@ Le contrôle lit les fichiers à la demande. Il utilise leur taille actuelle et 
 
 Dans **Liste** ou **Mosaïque**, ouvrez le menu contextuel d’un fichier et choisissez **Gérer les tags…** ou une commande de favoris. Les tags et le favori du fichier actif apparaissent dans le volet de détails.
 
-Utilisez **Ctrl+clic** pour ajouter ou retirer un fichier de la sélection, **Maj+clic** pour sélectionner une plage et un clic simple pour revenir à un seul fichier. La sélection reste limitée à la page et suit les changements de vue. Un clic droit sur un fichier sélectionné classe tout le lot. Un clic droit hors de la sélection classe le fichier visé. Les commandes de chemin utilisent toujours le fichier sous le pointeur. Dans le dialogue de tags, une case mixte laissée telle quelle garde ses associations. Cliquez une fois pour appliquer le tag à tous ou une seconde fois pour le retirer à tous.
+Utilisez **Ctrl+clic** pour ajouter ou retirer un fichier de la sélection, **Maj+clic** pour sélectionner une plage et un clic simple pour revenir à un seul fichier. La sélection reste limitée à la page et suit les changements de vue. Un clic droit sur un fichier sélectionné classe tout le lot. Un clic droit hors de la sélection classe le fichier visé. Les commandes de chemin utilisent toujours le fichier sous le pointeur. Le dialogue indique combien de fichiers du lot portent chaque tag, avec les libellés **Complet**, **Mixte** et **Absent**. Une case mixte laissée telle quelle garde ses associations. Cliquez une fois pour appliquer le tag à tous ou une seconde fois pour le retirer à tous.
 
 Dans l’arborescence de chaque bibliothèque, ouvrez **Favoris** ou un rayon sous **Mes rayons** pour consulter le classement à travers les collections. La recherche, le tri et le filtre d’extensions de la bibliothèque s’appliquent à ces vues. Un clic droit sur **Mes rayons** permet de créer un tag. Un clic droit sur un rayon permet de le renommer ou de le supprimer.
 
@@ -112,4 +116,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md) · [Rapport de recette ML-010](reports/ML-010_sauvegarde_restauration.md) · [Rapport de recette ML-011](reports/ML-011_tags_favoris.md) · [Rapport de recette ML-012](reports/ML-012_changements_synchronisation.md) · [Rapport de recette ML-013](reports/ML-013_regroupement_formats.md) · [Rapport de recette ML-014](reports/ML-014_ergonomie_menus_navigation.md) · [Rapport de recette ML-014a](reports/ML-014a_menu_bibliotheques.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md) · [Rapport de recette ML-008](reports/ML-008_metadonnees_livres.md) · [Rapport de recette ML-009](reports/ML-009_vue_detail_couvertures.md) · [Rapport de recette ML-009a](reports/ML-009a_vue_mosaique.md) · [Rapport de recette ML-010](reports/ML-010_sauvegarde_restauration.md) · [Rapport de recette ML-011](reports/ML-011_tags_favoris.md) · [Rapport de recette ML-012](reports/ML-012_changements_synchronisation.md) · [Rapport de recette ML-013](reports/ML-013_regroupement_formats.md) · [Rapport de recette ML-014](reports/ML-014_ergonomie_menus_navigation.md) · [Rapport de recette ML-014a](reports/ML-014a_menu_bibliotheques.md) · [Rapport de recette ML-015](reports/ML-015_habillage_ma_mediatheque.md)

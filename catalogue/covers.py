@@ -24,6 +24,8 @@ IMAGE_PIXELS = 16_000_000
 THUMBNAIL_SIZE = (215, 245)
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 DIRECTORY_LIMIT = 4096
+POSTER_EXTENSIONS = frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm"))
+ALBUM_EXTENSIONS = frozenset(("aac", "aif", "aiff", "alac", "flac", "m4a", "mp3", "ogg", "opus", "wav", "wma"))
 
 
 def thumbnail(stream, size):
@@ -150,6 +152,9 @@ def load_cover(row, *, size=THUMBNAIL_SIZE):
     for name in named[:8]:
         if data := local_image(name):
             return data, "Image de même nom"
+
+    if row["extension"] not in BOOK_EXTENSIONS:
+        return None, "Aucune image de même nom lisible."
 
     if row["extension"] == "epub":
         if data := epub_cover(path, size):

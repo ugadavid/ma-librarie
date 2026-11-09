@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from catalogue import backups, store
 from catalogue.tag_dialog import TagDialog
+from catalogue.night import SELECTED
 from catalogue.ui import App
 
 from test_catalogue import epub
@@ -232,7 +233,7 @@ class ClassificationTests(unittest.TestCase):
             view(mode)
             self.assertEqual({"Alpha.mobi", "Ubik.epub"}, select_names())
         self.assertEqual(set(app.table.selection()), app.mosaic.selection)
-        self.assertTrue(all(app.mosaic.canvas.itemcget(app.mosaic.tiles[item][0], "fill") == "#e2edff"
+        self.assertTrue(all(app.mosaic.canvas.itemcget(app.mosaic.tiles[item][0], "fill") == SELECTED
                             for item in app.table.selection()))
         menu = click("Alpha.mobi", 3)
         labels = {menu.entrycget(i, "label") for i in range(menu.index("end") + 1)

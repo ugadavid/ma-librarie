@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import font, ttk
 
 from .covers import load_cover
+from .night import INK
 
 
 class DetailPane(ttk.Frame):
@@ -18,7 +19,7 @@ class DetailPane(ttk.Frame):
         self.photo = None
         self.key = None
 
-        canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, takefocus=False)
+        canvas = tk.Canvas(self, background=INK, highlightthickness=0, borderwidth=0, takefocus=False)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)

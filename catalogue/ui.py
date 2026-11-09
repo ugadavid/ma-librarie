@@ -13,6 +13,7 @@ from .book_metadata import BOOK_EXTENSIONS
 from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
 from .mosaic import Mosaic
+from .night import Art, Home, TEAL, use_theme
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
 from .windows import explorer_target, select_in_explorer
@@ -158,13 +159,16 @@ class ScanWindow(tk.Toplevel):
 
 
 class App(ttk.Frame):
-    def __init__(self, window, catalogue, session=None):
-        super().__init__(window, padding=12)
+    def __init__(self, window, catalogue, session=None, *, start_home=False):
+        use_theme(window)
+        super().__init__(window, padding=10)
         self.window = window
         self.catalogue = catalogue
         self.session = session if session is not None else CatalogueSession(catalogue.filename)
         self.owns_session = session is None
         self.archive_running = False
+        self.at_home = False
+        self.home = None
         self.collections = []
         self.collection_items = {}
         self.active_collection = None
@@ -203,11 +207,18 @@ class App(ttk.Frame):
         self.pack(fill="both", expand=True)
         self.build()
         self.load_collections()
-        self.search_entry.focus_set()
+        if start_home:
+            self.show_home()
+        else:
+            self.search_entry.focus_set()
         window.protocol("WM_DELETE_WINDOW", self.close)
 
     def build(self):
-        search_bar = ttk.Frame(self)
+        self.workspace = ttk.Frame(self)
+        self.workspace.pack(fill="both", expand=True)
+        self.banner = Art(self.workspace, height=62, stretch=True)
+        self.banner.pack(fill="x", pady=(0, 7))
+        search_bar = self.search_bar = ttk.Frame(self.workspace)
         search_bar.pack(fill="x", pady=(0, 8))
         ttk.Label(search_bar, text="Rechercher").pack(side="left")
         self.query = tk.StringVar()
@@ -216,17 +227,17 @@ class App(ttk.Frame):
         self.query.trace_add("write", self.schedule_search)
         self.format_indicator = ttk.Label(search_bar)
 
-        panes = ttk.Panedwindow(self, orient="horizontal")
+        panes = ttk.Panedwindow(self.workspace, orient="horizontal")
         panes.pack(fill="both", expand=True)
         sources = ttk.Frame(panes, padding=(0, 0, 8, 0))
         results = ttk.Frame(panes)
-        panes.add(sources, weight=1)
+        panes.add(sources, weight=0)
         panes.add(results, weight=4)
 
         ttk.Label(sources, text="Rayons et collections").pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
-        self.tree.column("#0", width=245, stretch=True)
-        self.tree.tag_configure("automatic", foreground="#245284")
+        self.tree.column("#0", width=185, stretch=True)
+        self.tree.tag_configure("automatic", foreground=TEAL)
         self.tree.bind("<<TreeviewOpen>>", self.expand_tree)
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
         self.tree.bind("<Button-3>", self.show_context_menu)
@@ -235,7 +246,7 @@ class App(ttk.Frame):
         self.result_header = ttk.Frame(results, padding=(0, 0, 0, 5))
         self.result_header.pack(fill="x")
         self.result_header.columnconfigure(0, weight=1)
-        self.scope_label = ttk.Label(self.result_header)
+        self.scope_label = ttk.Label(self.result_header, style="Night.Title.TLabel")
         self.scope_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
 
         self.navigation = ttk.Frame(self.result_header)
@@ -284,14 +295,14 @@ class App(ttk.Frame):
         for files in (self.mosaic_files, self.detail_files):
             self.bind_context_keys(files.table, files.context)
 
-        details = self.list_details = ttk.Frame(self, padding=(0, 8))
+        details = self.list_details = ttk.Frame(self.workspace, padding=(0, 6))
         details.pack(fill="x")
         self.details = tk.StringVar()
         ttk.Label(details, textvariable=self.details, wraplength=980).pack(anchor="w")
         self.full_path = tk.StringVar()
         ttk.Entry(details, textvariable=self.full_path, state="readonly").pack(fill="x", pady=4)
 
-        bottom = self.bottom = ttk.Frame(self)
+        bottom = self.bottom = ttk.Frame(self.workspace)
         bottom.pack(fill="x")
         self.status = tk.StringVar(value="Prêt")
         ttk.Label(bottom, textvariable=self.status, wraplength=825).pack(side="left")
@@ -314,12 +325,13 @@ class App(ttk.Frame):
         self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
         self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
         self.catalogue_menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
+        self.catalogue_menu.add_command(label="Accueil", command=self.show_home)
 
         for key, (label, _) in LIBRARIES.items():
             if key == UNCLASSIFIED:
                 self.library_menu.add_separator()
             self.library_menu.add_radiobutton(
-                label=label, variable=self.library, value=key, command=self.load_collections,
+                label=label, variable=self.library, value=key, command=self.enter_library,
                 underline=2 if key == UNCLASSIFIED else 0,
             )
 
@@ -347,6 +359,32 @@ class App(ttk.Frame):
         self.display_menu.add_cascade(label="Trier par", menu=self.sort_menu)
         self.display_menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
                                           command=self.toggle_grouping)
+
+    def show_home(self):
+        if self.busy or self.at_home:
+            return
+        if self.home is None:
+            self.home = Home(self, self.enter_library)
+        self.at_home = True
+        self.workspace.pack_forget()
+        self.home.pack(fill="both", expand=True)
+        self.home.buttons["books"].focus_set()
+        self.update_controls()
+
+    def show_workspace(self):
+        if self.at_home:
+            self.at_home = False
+            self.home.pack_forget()
+            self.workspace.pack(fill="both", expand=True)
+            self.search_entry.focus_set()
+
+    def enter_library(self, library=None):
+        if self.busy:
+            return
+        if library is not None:
+            self.library.set(library)
+        self.show_workspace()
+        self.load_collections()
 
     def layout_results_header(self, event):
         width = event.width
@@ -408,7 +446,13 @@ class App(ttk.Frame):
     def load_collections(self, selected=None, keep_scope=False):
         scope = self.scope if keep_scope else None
         shelf = self.shelf if keep_scope else None
-        self.collections = self.catalogue.collections(self.library.get())
+        library = self.library.get()
+        if library == UNCLASSIFIED:
+            self.banner.pack_forget()
+        else:
+            self.banner.show(f"banner-{library}")
+            self.banner.pack(fill="x", pady=(0, 7), before=self.search_bar)
+        self.collections = self.catalogue.collections(library)
         self.roots.clear()
         self.tree.delete(*self.tree.get_children())
         self.nodes.clear()
@@ -1087,6 +1131,11 @@ class App(ttk.Frame):
         for menu in (self.catalogue_menu, self.search_menu, self.display_menu):
             for index in range(menu.index("end") + 1):
                 menu.entryconfigure(index, state=state)
+        if self.at_home:
+            for menu in (self.search_menu, self.display_menu):
+                for index in range(menu.index("end") + 1):
+                    menu.entryconfigure(index, state="disabled")
+            self.catalogue_menu.entryconfigure("Accueil", state="disabled")
         if self.selected_extensions is None:
             self.search_menu.entryconfigure("Réinitialiser le filtre", state="disabled")
         if self.view_mode.get() == "mosaic":
@@ -1130,7 +1179,9 @@ class App(ttk.Frame):
                 self.catalogue.rename_collection(collection["id"], name)
                 self.load_roots(keep_scope=True)
             else:
-                self.load_collections(self.catalogue.create_collection(name, self.library.get()))
+                selected = self.catalogue.create_collection(name, self.library.get())
+                self.show_workspace()
+                self.load_collections(selected)
         except sqlite3.IntegrityError:
             messagebox.showerror(title, "Ce nom de collection est déjà utilisé.", parent=self)
         except (ValueError, OSError, sqlite3.Error) as exc:
@@ -1614,7 +1665,7 @@ def main():
     if os.name != "nt":
         raise SystemExit("Ma Librarie nécessite Windows.")
     window = tk.Tk()
-    window.title("Ma Librarie")
+    window.title("Ma Médiathèque")
     window.geometry("1130x680")
     window.minsize(850, 480)
     session = None
@@ -1629,7 +1680,7 @@ def main():
         window.destroy()
         return
     try:
-        App(window, catalogue, session)
+        App(window, catalogue, session, start_home=True)
         window.mainloop()
     finally:
         session.close()
