@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from .duplicate_view import DuplicateWindow
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .windows import explorer_target, select_in_explorer
 
@@ -158,6 +159,7 @@ class App(ttk.Frame):
         self.active_collection = None
         self.context_menu = None
         self.file_menu = None
+        self.duplicate_window = None
         initial = UNCLASSIFIED if catalogue.collections(UNCLASSIFIED) else "books"
         self.library = tk.StringVar(window, value=initial)
         self.roots = {}
@@ -190,6 +192,10 @@ class App(ttk.Frame):
             )
             button.pack(side="left", padx=(0, 14))
             self.library_buttons[key] = button
+        self.duplicate_button = ttk.Button(
+            libraries, text="Rechercher les doublons", command=self.open_duplicates
+        )
+        self.duplicate_button.pack(side="right")
 
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 8))
@@ -407,7 +413,7 @@ class App(ttk.Frame):
         self.refresh_results()
 
     def show_context_menu(self, event):
-        if self.scanning:
+        if self.busy:
             return
         node = self.tree.identify_row(event.y)
         collection = self.collection_items.get(node)
@@ -552,8 +558,36 @@ class App(ttk.Frame):
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
         self.update_buttons()
 
+    @property
+    def busy(self):
+        return self.scanning or self.duplicate_window is not None
+
+    def open_duplicates(self):
+        if self.busy:
+            return
+        self.duplicate_window = DuplicateWindow(
+            self, self.collection_id(), self.selected_extensions, self.scope,
+            self.filter_library(), self.scope_label.cget("text")
+        )
+        self.update_buttons()
+        if self.duplicate_window.winfo_viewable():
+            self.duplicate_window.grab_set()
+        else:
+            self.duplicate_window.bind("<Map>", self.grab_duplicates)
+
+    def grab_duplicates(self, event):
+        if event.widget is self.duplicate_window:
+            self.duplicate_window.grab_set()
+            self.duplicate_window.unbind("<Map>")
+
+    def duplicates_closed(self):
+        self.duplicate_window = None
+        self.update_buttons()
+
     def update_buttons(self):
-        active = not self.scanning
+        active = not self.busy
+        self.duplicate_button.configure(state="normal" if active else "disabled")
+        self.extension_button.configure(state="normal" if self.duplicate_window is None else "disabled")
         collection = self.collection_id()
         for button in self.library_buttons.values():
             button.configure(state="normal" if active else "disabled")
@@ -573,11 +607,11 @@ class App(ttk.Frame):
 
     def rename_collection(self, collection=None):
         collection = self.active_collection if collection is None else collection
-        if not self.scanning and collection is not None:
+        if not self.busy and collection is not None:
             self.edit_collection_name(collection)
 
     def move_collection(self, collection, library):
-        if self.scanning:
+        if self.busy:
             return
         try:
             self.catalogue.move_collection(collection, library)
@@ -587,7 +621,7 @@ class App(ttk.Frame):
             messagebox.showerror("Rattacher la collection", str(exc), parent=self)
 
     def edit_collection_name(self, collection=None):
-        if self.scanning:
+        if self.busy:
             return
         title = "Renommer la collection" if collection else "Nouvelle collection"
         name = simpledialog.askstring(
@@ -609,7 +643,7 @@ class App(ttk.Frame):
 
     def delete_collection(self, collection=None):
         collection = self.active_collection if collection is None else collection
-        if self.scanning or collection is None:
+        if self.busy or collection is None:
             return
         title = "Supprimer la collection"
         if not messagebox.askyesno(
@@ -638,7 +672,7 @@ class App(ttk.Frame):
 
     def remove_root(self, root=None):
         root = self.selected_root() if root is None else root
-        if self.scanning or root is None:
+        if self.busy or root is None:
             return
         title = "Retirer ce dossier source"
         if not messagebox.askyesno(
@@ -658,7 +692,7 @@ class App(ttk.Frame):
 
     def add_root(self, collection=None):
         collection = self.collection_id() if collection is None else collection
-        if self.scanning or collection is None:
+        if self.busy or collection is None:
             return
         folder = filedialog.askdirectory(parent=self, title="Ajouter un dossier source", mustexist=True)
         if folder:
@@ -671,7 +705,7 @@ class App(ttk.Frame):
                 messagebox.showerror("Source", str(exc), parent=self)
 
     def relocate(self, root=None):
-        if self.scanning:
+        if self.busy:
             return
         if root is None:
             row = self.selected_file()
@@ -691,35 +725,39 @@ class App(ttk.Frame):
                 messagebox.showerror("Relocalisation", str(exc), parent=self)
 
     def show_file_menu(self, event):
-        if self.table.identify_region(event.x, event.y) != "cell":
-            return
-        row = self.rows.get(self.table.identify_row(event.y))
+        self.file_menu = self.post_file_menu(self.table, self.rows, self.file_menu, event)
+
+    def post_file_menu(self, table, rows, previous, event):
+        if table.identify_region(event.x, event.y) not in ("cell", "tree"):
+            return previous
+        row = rows.get(table.identify_row(event.y))
         if row is None:
-            return
-        if self.file_menu is not None:
-            self.file_menu.destroy()
-        menu = self.file_menu = tk.Menu(self.table, tearoff=False)
+            return previous
+        if previous is not None:
+            previous.destroy()
+        menu = tk.Menu(table, tearoff=False)
         menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
         menu.add_command(label="Afficher dans l’Explorateur",
-                         command=lambda: self.show_in_explorer(row))
+                         command=lambda: self.show_in_explorer(row, table.winfo_toplevel()))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+        return menu
 
     def copy_path(self, row):
         self.clipboard_clear()
         self.clipboard_append(row["full_path"])
         self.status.set("Chemin copié.")
 
-    def show_in_explorer(self, row):
+    def show_in_explorer(self, row, parent=None):
         try:
             target = explorer_target(
                 row["root_path"], row["volume"], row["root_relative"], row["relative"]
             )
             select_in_explorer(target)
         except OSError as exc:
-            messagebox.showerror("Explorateur Windows", str(exc), parent=self)
+            messagebox.showerror("Explorateur Windows", str(exc), parent=parent or self)
 
     def synchronize(self, collection=None):
         collection = self.collection_id() if collection is None else collection
@@ -727,7 +765,7 @@ class App(ttk.Frame):
             self.start_scan(collection)
 
     def start_scan(self, collection, *, root_id=None):
-        if self.scanning:
+        if self.busy:
             return
         self.scanning = True
         self.errors = []
@@ -786,6 +824,9 @@ class App(ttk.Frame):
         text.configure(state="disabled")
 
     def close(self):
+        if self.duplicate_window is not None:
+            self.duplicate_window.request_close()
+            return
         if not self.scanning or messagebox.askyesno(
                 "Synchronisation en cours", "Fermer pendant la synchronisation ?", parent=self):
             self.flush_column_widths()

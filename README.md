@@ -42,6 +42,14 @@ Cliquez sur un en-tête pour trier les résultats, puis cliquez de nouveau pour 
 
 Faites glisser la séparation entre deux en-têtes pour régler la largeur des colonnes. Ces largeurs sont enregistrées pour toutes les collections et restaurées au démarrage. Si la fenêtre est trop étroite, utilisez la barre de défilement horizontale sous la liste.
 
+## Rechercher les doublons exacts
+
+Cliquez sur **Rechercher les doublons** depuis une bibliothèque, une collection ou une branche. La vérification utilise le filtre d’extensions de cette vue. La saisie de recherche de la liste principale reste disponible au retour et ne limite pas la vérification.
+
+La vue dédiée affiche les groupes ouverts, avec le nom, le chemin complet, la taille et les collections de chaque copie. Utilisez le clic droit pour copier un chemin ou afficher le fichier dans l’Explorateur. **Voir les anomalies** indique quels fichiers ont empêché une vérification complète. Vous pouvez annuler une analyse en cours.
+
+Le contrôle lit les fichiers à la demande. Il utilise leur taille actuelle et une empreinte SHA-256, puis confirme l’égalité octet par octet. Chaque emplacement compte une fois, même si plusieurs collections le référencent.
+
 ## Tests
 
 Exécutez la suite dans une session Windows de bureau avec Tkinter.
@@ -50,4 +58,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md) · [Rapport de recette ML-007](reports/ML-007_doublons_exacts.md)

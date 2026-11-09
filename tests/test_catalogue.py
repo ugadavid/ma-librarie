@@ -2,6 +2,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -9,7 +10,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from catalogue import store
+from catalogue import duplicates, store
 from catalogue.ui import App, EXTENSION_PRESETS
 from catalogue.windows import Location, SourceProblem, explorer_target, locate
 
@@ -793,6 +794,150 @@ class CatalogueTests(unittest.TestCase):
             app.file_menu.invoke(1)
         self.assertIn("a disparu", error.call_args.args[1])
         explorer.assert_not_called()
+
+    def duplicates(self, collection=None, extension=None, scope=None, library=None, cancelled=None):
+        return duplicates.find_duplicates(
+            self.db, collection, extension, scope, library,
+            cancelled or threading.Event(), lambda *_update: None,
+        )
+
+    def test_exact_duplicates_deduplicate_aliases_and_use_current_size(self):
+        self.db.move_collection(self.collection, "books")
+        other = self.db.create_collection("Autres copies", "books")
+        target = self.nested / "A.pdf"
+        shared = self.other / "B.pdf"
+        different = self.nested / "C.pdf"
+        target.write_bytes(b"meme")
+        shared.write_bytes(b"taille initiale differente")
+        different.write_bytes(b"diff")
+        self.db.add_root(other, self.other)
+        self.db.synchronize(self.collection)
+        self.db.synchronize(other)
+        shared.write_bytes(b"meme")  # Change size since the last catalogue scan.
+
+        result = self.duplicates(library="books", extension={"pdf"})
+        group, = result.groups
+        self.assertEqual({str(target), str(shared)}, {copy.row["full_path"] for copy in group})
+        copy = next(copy for copy in group if copy.row["name"] == "B.pdf")
+        self.assertEqual("Autres copies · Livres", copy.row["collection_names"])
+        self.assertEqual(4, copy.size)
+        self.assertFalse(result.issues)
+        self.assertFalse(self.duplicates(self.collection, {"pdf"}, (self.root_id, self.nested.name)).groups)
+        self.assertFalse(self.duplicates(library="books", extension={"epub"}).groups)
+
+        with patch.object(duplicates, "hash_copy", return_value=b"empreinte identique injectee"):
+            collision = self.duplicates(library="books", extension={"pdf"})
+        self.assertEqual([[copy.row["name"] for copy in group]], [
+            [copy.row["name"] for copy in group] for group in collision.groups
+        ])
+
+    def test_duplicates_report_unavailable_and_changing_files(self):
+        fresh = self.books / "Stable.bin"
+        changed = self.books / "Modifié.bin"
+        missing = self.books / "Absent.bin"
+        denied = self.books / "Refusé.bin"
+        offline = self.other / "Hors ligne.bin"
+        for file in (fresh, changed, missing, denied, offline):
+            file.write_bytes(b"temoin")
+        self.db.synchronize(self.collection)
+        missing.unlink()
+        self.other.rename(self.other.with_name("Débranché"))
+        original_open = Path.open
+        original_read = duplicates.read_block
+        modified = False
+
+        def open_fixture(path, *args, **kwargs):
+            if path.name == denied.name:
+                raise PermissionError("Refus témoin")
+            return original_open(path, *args, **kwargs)
+
+        def read_fixture(stream, row):
+            nonlocal modified
+            block = original_read(stream, row)
+            if row["name"] == changed.name and not modified:
+                modified = True
+                before = changed.stat().st_mtime_ns
+                with original_open(changed, "wb") as output:
+                    output.write(b"autres")
+                os.utime(changed, ns=(before, before + 2_000_000_000))
+            return block
+
+        with patch.object(Path, "open", open_fixture), \
+                patch.object(duplicates, "read_block", side_effect=read_fixture):
+            result = self.duplicates(self.collection, {"bin"})
+        self.assertTrue(modified)
+        self.assertFalse(result.groups)
+        self.assertEqual({offline.name: "offline", missing.name: "missing",
+                          denied.name: "error", changed.name: "changed"},
+                         {issue.row["name"]: issue.category for issue in result.issues})
+        self.assertEqual(b"temoin", fresh.read_bytes())
+
+    def test_duplicate_cancellation_releases_catalogue(self):
+        (self.books / "A.bin").write_bytes(b"copies")
+        (self.other / "B.bin").write_bytes(b"copies")
+        self.db.synchronize(self.collection)
+        cancelled = threading.Event()
+
+        def cancel_on_read(_stream, _row):
+            with self.assertRaisesRegex(OSError, "Catalogue occupé"):
+                self.db.rename_collection(self.collection, "Bloqué")
+            cancelled.set()
+            return b"copies"
+
+        with patch.object(duplicates, "read_block", side_effect=cancel_on_read):
+            with self.assertRaises(duplicates.Cancelled):
+                self.duplicates(self.collection, {"bin"}, cancelled=cancelled)
+        self.db.rename_collection(self.collection, "Disponible")
+        self.assertEqual("Disponible", self.db.collections()[0]["name"])
+
+    def test_duplicate_window_lists_paths_and_keeps_main_view(self):
+        self.db.move_collection(self.collection, "books")
+        first = self.nested / "Premier.bin"
+        second = self.nested / "Autre nom.bin"
+        first.write_bytes(b"identiques")
+        second.write_bytes(b"identiques")
+        self.db.synchronize(self.collection)
+        self.db.set_extension_filter(self.collection, {"bin"})
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        app = App(window, self.db)
+        app.load_collections(self.collection)
+        root = f"root-{self.root_id}"
+        app.load_children(root)
+        branch, = app.tree.get_children(root)
+        app.tree.see(branch)
+        app.tree.selection_set(branch)
+        app.query.set("Recherche sans résultat")
+        app.sort_by("Taille")
+        window.update()
+        saved = app.scope, app.sort, app.selected_extensions, app.query.get()
+        self.assertFalse(app.rows)
+        app.duplicate_button.invoke()
+        view = app.duplicate_window
+        deadline = time.monotonic() + 10
+        while view.running and time.monotonic() < deadline:
+            window.update()
+            time.sleep(0.02)
+        self.assertFalse(view.running)
+        group, = view.table.get_children()
+        self.assertIn("Doublon exact · 2 copies", view.table.item(group, "text"))
+        self.assertTrue(view.table.item(group, "open"))
+        self.assertEqual({str(first), str(second)}, {
+            view.table.set(item, "path") for item in view.table.get_children(group)
+        })
+        item = next(item for item, row in view.rows.items() if row["full_path"] == str(second))
+        view.table.selection_set(item)
+        window.update()
+        self.assertEqual(str(second), view.path.get())
+        x, y, _, height = view.table.bbox(item, "path")
+        with patch.object(tk.Menu, "tk_popup") as popup:
+            view.table.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
+        popup.assert_called_once()
+        view.file_menu.invoke(0)
+        self.assertEqual(str(second), window.clipboard_get())
+        view.request_close()
+        self.assertIsNone(app.duplicate_window)
+        self.assertEqual(saved, (app.scope, app.sort, app.selected_extensions, app.query.get()))
 
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()

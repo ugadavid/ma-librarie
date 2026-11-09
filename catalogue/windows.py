@@ -82,7 +82,7 @@ def verify(folder, volume, relative):
     return current
 
 
-def explorer_target(folder, volume, relative, file_relative):
+def verified_file(folder, volume, relative, file_relative):
     source = verify(folder, volume, relative)
     # Check each component so a new link cannot redirect an indexed path.
     target = source.scan_path
@@ -96,6 +96,11 @@ def explorer_target(folder, volume, relative, file_relative):
         raise SourceProblem("missing", "Le fichier a disparu depuis le dernier inventaire.") from exc
     if not stat.S_ISREG(info.st_mode):
         raise SourceProblem("missing", "Le chemin ne désigne plus un fichier.")
+    return source, target, info
+
+
+def explorer_target(folder, volume, relative, file_relative):
+    source, _, _ = verified_file(folder, volume, relative, file_relative)
     verify(folder, volume, relative)
     return source.path / file_relative
 

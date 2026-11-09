@@ -254,7 +254,7 @@ class Catalogue:
             try:
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
-                raise OSError("Catalogue occupé. Attendez la fin de la synchronisation ou réessayez.") from exc
+                raise OSError("Catalogue occupé. Attendez la fin de l’opération en cours ou réessayez.") from exc
             try:
                 yield
             finally:
@@ -480,18 +480,14 @@ class Catalogue:
                     (value, json.dumps(sorted(set(extensions)))),
                 )
 
-    def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0, *, descending=None, library=None):
-        terms = query.casefold().split()
-        filters = [
-            r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
-            for _ in terms
-        ]
-        args = list(terms)
+    @staticmethod
+    def file_filters(extension, scope, relative_column="relative"):
+        filters = []
+        args = []
         if extension is not None:
             selected = (extension,) if isinstance(extension, str) else tuple(extension)
             if not selected:
-                return []
+                return ["0"], []
             placeholders = ", ".join("?" for _ in selected)
             filters.append(f"extension IN ({placeholders})")
             args.extend(selected)
@@ -501,8 +497,39 @@ class Catalogue:
             args.append(root_id)
             if directory:
                 prefix = directory + os.sep
-                filters.append("substr(relative, 1, length(?)) = ?")
+                filters.append(f"substr({relative_column}, 1, length(?)) = ?")
                 args.extend((prefix, prefix))
+        return filters, args
+
+    def duplicate_candidates(self, collection, extension, scope, library):
+        collections_where, collections_args = self.collection_scope(collection, library)
+        filters, args = self.file_filters(extension, scope, "entries.relative")
+        where = " AND ".join([collections_where, "kind = 'file'", *filters])
+        with self.connect() as db:
+            return db.execute(
+                f"""SELECT entries.name, entries.relative, volume_path, roots.volume,
+                           roots.relative AS root_relative, roots.path AS root_path,
+                           collections.name AS collection_name,
+                           rtrim(roots.path, ?) || ? || entries.relative AS full_path
+                    FROM entries JOIN roots ON roots.id = root_id
+                    JOIN collections ON collections.id = roots.collection_id
+                    LEFT JOIN collection_libraries ON collection_libraries.collection_id = collections.id
+                    WHERE {where}
+                    ORDER BY CASE WHEN roots.state IN ('available', 'partial')
+                                      AND entries.state = 'available' THEN 0 ELSE 1 END, root_id""",
+                (os.sep, os.sep, *collections_args, *args),
+            ).fetchall()
+
+    def search(self, collection, query="", extension=None, sort="Nom", scope=None,
+               limit=200, offset=0, *, descending=None, library=None):
+        terms = query.casefold().split()
+        filters = [
+            r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
+            for _ in terms
+        ]
+        scope_filters, scope_args = self.file_filters(extension, scope)
+        filters.extend(scope_filters)
+        args = [*terms, *scope_args]
         where = " AND ".join(filters) or "1"
         collections_where, collections_args = self.collection_scope(collection, library)
         order = SORTS[sort]
