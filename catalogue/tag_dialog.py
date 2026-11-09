@@ -3,7 +3,7 @@ from tkinter import messagebox, ttk
 
 
 class TagDialog(tk.Toplevel):
-    def __init__(self, parent, tags, count, apply):
+    def __init__(self, parent, tags, count, apply, *, subject=None):
         super().__init__(parent)
         self.title("Gérer les tags")
         self.transient(parent)
@@ -15,7 +15,7 @@ class TagDialog(tk.Toplevel):
 
         panel = ttk.Frame(self, padding=12)
         panel.pack(fill="both", expand=True)
-        ttk.Label(panel, text=f"{count} fichier(s) concerné(s)").pack(anchor="w")
+        ttk.Label(panel, text=subject or f"{count} fichier(s) concerné(s)").pack(anchor="w")
         ttk.Label(panel, text="Les tags mixtes laissés intacts gardent leurs associations.").pack(anchor="w")
 
         body = ttk.Frame(panel)

@@ -5,6 +5,7 @@ from tkinter import font, ttk
 
 from .book_metadata import BOOK_EXTENSIONS
 from .covers import load_cover
+from .work_view import format_counts, format_label
 
 
 TILE_WIDTH = 286
@@ -39,12 +40,14 @@ def title_lines(text, face, width):
 
 
 class Mosaic(ttk.Frame):
-    def __init__(self, parent, select, menu, state, badge):
+    def __init__(self, parent, select, menu, state, badge, open_format):
         super().__init__(parent)
         self.select = select
         self.menu = menu
         self.file_state = state
         self.change_badge = badge
+        self.open_format = open_format
+        self.format_buttons = {}
         self.canvas = tk.Canvas(self, background="#f1f4f8", highlightthickness=0, takefocus=True)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrolled)
@@ -53,6 +56,7 @@ class Mosaic(ttk.Frame):
         self.canvas.bind("<Configure>", self.resize)
         self.canvas.bind("<Button-1>", self.click)
         self.canvas.bind("<Button-3>", self.context)
+        self.canvas.bind("<Motion>", self.hover)
         self.canvas.bind("<MouseWheel>", self.wheel)
         for key in ("Left", "Right", "Up", "Down"):
             self.canvas.bind(f"<{key}>", self.arrow)
@@ -96,6 +100,7 @@ class Mosaic(ttk.Frame):
         self.entries = ()
         self.indices.clear()
         self.tiles.clear()
+        self.format_buttons.clear()
         self.images.clear()
         self.attempted.clear()
         self.selected = None
@@ -116,6 +121,7 @@ class Mosaic(ttk.Frame):
     def redraw(self):
         self.canvas.delete("all")
         self.tiles.clear()
+        self.format_buttons.clear()
         self.columns = max(1, self.width // TILE_WIDTH)
         for index, (item, row) in enumerate(self.entries):
             y = (index // self.columns) * ROW_HEIGHT + GAP
@@ -140,13 +146,16 @@ class Mosaic(ttk.Frame):
                 x + 84, y + 54, anchor="nw", font=self.face, fill="#344861",
                 text=fit(row["author"], self.face, label_width),
             )
-            state = self.file_state(row)
-            badge = self.change_badge(row)
-            annotation = " · ".join(filter(None, (badge, format_name, state if state != "Disponible" else "")))
-            self.canvas.create_text(
-                x + 84, y + 77, anchor="nw", font=self.face, fill="#344861",
-                text=fit(annotation, self.face, label_width),
-            )
+            if isinstance(row, dict) and "members" in row:
+                self.draw_formats(item, row["members"], x + 84, y + 72, right - 5)
+            else:
+                state = self.file_state(row)
+                badge = self.change_badge(row)
+                annotation = " · ".join(filter(None, (badge, format_name, state if state != "Disponible" else "")))
+                self.canvas.create_text(
+                    x + 84, y + 77, anchor="nw", font=self.face, fill="#344861",
+                    text=fit(annotation, self.face, label_width),
+                )
             self.tiles[item] = card, badge, picture
             self.paint_selection(item)
             if item in self.images:
@@ -154,6 +163,28 @@ class Mosaic(ttk.Frame):
         height = ((len(self.entries) + self.columns - 1) // self.columns) * ROW_HEIGHT + GAP
         self.canvas.configure(scrollregion=(0, 0, self.width, height))
         self.schedule_pump()
+
+    def draw_formats(self, item, members, left, top, right):
+        x, y = left, top
+        for name, count in format_counts(members):
+            label = format_label(name, count)
+            width = self.face.measure(label) + 10
+            if x > left and x + width > right:
+                x, y = left, y + 17
+            box = self.canvas.create_rectangle(x, y, x + width, y + 15, fill="#e5effe", outline="#9ab6de")
+            text = self.canvas.create_text(x + width / 2, y + 7, text=label, font=self.face, fill="#16416f")
+            self.format_buttons[box] = self.format_buttons[text] = (item, name.lower())
+            x += width + 4
+
+    def format_at(self, event):
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        for part in reversed(self.canvas.find_overlapping(x, y, x, y)):
+            if part in self.format_buttons:
+                return self.format_buttons[part]
+        return None
+
+    def hover(self, event):
+        self.canvas.configure(cursor="hand2" if self.format_at(event) else "")
 
     def paint_selection(self, item):
         if item in self.tiles:
@@ -183,14 +214,15 @@ class Mosaic(ttk.Frame):
         return None
 
     def click(self, event):
-        if item := self.item_at(event):
+        if button := self.format_at(event):
+            self.open_format(*button)
+        elif item := self.item_at(event):
             self.canvas.focus_set()
             self.select(item, event.state)
         return "break"
 
     def context(self, event):
-        if item := self.item_at(event):
-            self.menu(item, event)
+        self.menu(self.item_at(event), event)
         return "break"
 
     def arrow(self, event):

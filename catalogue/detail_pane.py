@@ -23,7 +23,7 @@ class DetailPane(ttk.Frame):
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        panel = ttk.Frame(canvas, padding=(12, 8))
+        panel = self.panel = ttk.Frame(canvas, padding=(12, 8))
         content = canvas.create_window((0, 0), window=panel, anchor="nw")
         panel.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content, width=event.width))
@@ -56,7 +56,7 @@ class DetailPane(ttk.Frame):
         self.canvas.yview_scroll(-event.delta // 120, "units")
         return "break"
 
-    def show(self, row, metadata, state, books):
+    def show(self, row, metadata, state, books, *, work=False):
         key = (row["root_path"], row["relative"], row["modified"], state, books) if row else None
         if key != self.key:
             self.canvas.yview_moveto(0)
@@ -71,16 +71,21 @@ class DetailPane(ttk.Frame):
             self.path.set("")
             return
         self.title.configure(text=row["title"] or row["name"])
-        lines = [
-            *metadata,
-            f'Nom : {row["name"]}',
-            f'Format : {row["extension"].upper() or "Sans extension"}',
-            f'Collections : {row["collection_names"]}',
-            f'État au dernier inventaire : {state}',
-            "Chemin complet",
-        ]
-        self.metadata.configure(text="\n".join(lines))
-        self.path.set(row["full_path"])
+        if work:
+            self.metadata.configure(text="\n".join([row["author"], *metadata]).strip())
+            self.path_entry.pack_forget()
+        else:
+            lines = [
+                *metadata,
+                f'Nom : {row["name"]}',
+                f'Format : {row["extension"].upper() or "Sans extension"}',
+                f'Collections : {row["collection_names"]}',
+                f'État au dernier inventaire : {state}',
+                "Chemin complet",
+            ]
+            self.metadata.configure(text="\n".join(lines))
+            self.path_entry.pack(fill="x", pady=(0, 8), before=self.cover)
+        self.path.set("" if work else row["full_path"])
 
     def clear_cover(self):
         self.generation += 1

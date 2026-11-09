@@ -7,11 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from .store import CLASSIFICATION_SCHEMA, SCHEMA, SCHEMA_V1
+from .store import CLASSIFICATION_SCHEMA, SCHEMA, SCHEMA_V1, SCHEMA_V2, WORK_SCHEMA
 
 
 APPLICATION_ID = 0x4D4C4942  # MLIB
-BACKUP_VERSION = 2
+BACKUP_VERSION = 3
+BACKUP_SCHEMAS = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA}
 SESSION_SLOTS = 32
 
 
@@ -141,10 +142,10 @@ def validate(path, *, backup=True):
             if db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
                 raise BackupError("Ce fichier n’est pas une sauvegarde de Ma Librarie.")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (1, BACKUP_VERSION):
+            if version not in BACKUP_SCHEMAS:
                 raise BackupError("Cette version de sauvegarde n’est pas prise en charge.")
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA_V1 if version == 1 else SCHEMA)
+            expected.executescript(BACKUP_SCHEMAS[version])
             if schema_signature(db) != schema_signature(expected):
                 raise BackupError("Le schéma de la sauvegarde est incompatible.")
         if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
@@ -202,8 +203,10 @@ def prepare_restore(catalogue, source):
         stage_snapshot(source, temporary)
         collections, roots = validate(temporary)
         with closing(sqlite3.connect(temporary)) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] == 1:
-                db.executescript(CLASSIFICATION_SCHEMA)
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version < BACKUP_VERSION:
+                migration = CLASSIFICATION_SCHEMA + WORK_SCHEMA if version == 1 else WORK_SCHEMA
+                db.executescript(migration)
                 db.execute(f"PRAGMA user_version = {BACKUP_VERSION}")
         validate(temporary)
         return PreparedBackup(temporary, source.name, collections, roots)

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .book_metadata import BOOK_EXTENSIONS, EMPTY, MetadataError, book_metadata, companion_metadata
+from .book_metadata import BOOK_EXTENSIONS, EMPTY, MetadataError, book_metadata, companion_metadata, normalized
 from .windows import SourceProblem, is_reparse, locate, verify
 
 
@@ -92,7 +92,26 @@ CREATE TABLE IF NOT EXISTS favorites (
     PRIMARY KEY (library, volume, volume_path)
 );
 """
-SCHEMA = SCHEMA_V1 + CLASSIFICATION_SCHEMA
+SCHEMA_V2 = SCHEMA_V1 + CLASSIFICATION_SCHEMA
+WORK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS works (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS work_members (
+    volume TEXT NOT NULL,
+    volume_path TEXT NOT NULL,
+    work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    PRIMARY KEY (volume, volume_path)
+);
+CREATE INDEX IF NOT EXISTS work_members_by_work ON work_members (work_id);
+CREATE TABLE IF NOT EXISTS work_tags (
+    work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (work_id, tag_id)
+);
+"""
+SCHEMA = SCHEMA_V2 + WORK_SCHEMA
 
 UNCLASSIFIED = "unclassified"
 LIBRARIES = {
@@ -333,6 +352,19 @@ class Catalogue:
                 """INSERT INTO ui_preferences (name, value) VALUES ('results_view', ?)
                    ON CONFLICT (name) DO UPDATE SET value = excluded.value""",
                 (mode,),
+            )
+
+    def groups_enabled(self):
+        with self.connect() as db:
+            return db.execute(
+                "SELECT 1 FROM ui_preferences WHERE name = 'grouped_books' AND value = '1'"
+            ).fetchone() is not None
+
+    def save_groups_enabled(self, enabled):
+        with self.mutation(), self.connect() as db:
+            db.execute(
+                """INSERT INTO ui_preferences (name, value) VALUES ('grouped_books', ?)
+                   ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (str(int(enabled)),)
             )
 
     def column_widths(self):
@@ -679,24 +711,151 @@ class Catalogue:
                            WHERE tags.library = ? AND t.tag_id = ?
                            AND t.volume = {volume} AND t.volume_path = {path})""", (library, shelf)
 
+    def works(self):
+        with self.connect() as db:
+            return db.execute(
+                """SELECT works.*, count(work_members.work_id) AS members
+                   FROM works JOIN work_members ON work_id = works.id
+                   GROUP BY works.id ORDER BY fold(title), works.id"""
+            ).fetchall()
+
+    def work_at(self, location):
+        with self.connect() as db:
+            return db.execute(
+                "SELECT work_id FROM work_members WHERE volume = ? AND volume_path = ?", location
+            ).fetchone()
+
+    def suggested_editions(self, row):
+        title = normalized(row["title"])
+        author = normalized(row["author"])
+        if not (title and author):
+            return []
+        candidates = self.search(
+            None, extension=BOOK_EXTENSIONS, library="books", limit=-1, metadata=(title, author)
+        )
+        if len({row["extension"] for row in candidates}) < 2:
+            return []
+        return candidates
+
+    @staticmethod
+    def work_scope(db, locations, work_ids):
+        involved = set(work_ids)
+        for location in locations:
+            row = db.execute(
+                "SELECT work_id FROM work_members WHERE volume = ? AND volume_path = ?", location
+            ).fetchone()
+            if row:
+                involved.add(row["work_id"])
+        result = []
+        for work_id in sorted(involved):
+            row = db.execute(
+                """SELECT title, (SELECT count(*) FROM work_members WHERE work_id = works.id)
+                   FROM works WHERE id = ?""", (work_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Un ouvrage a changé dans une autre fenêtre.")
+            result.append((work_id, *row))
+        return tuple(result)
+
+    def preview_work(self, locations, work_ids):
+        with self.connect() as db:
+            db.execute("BEGIN")
+            return self.work_scope(db, locations, work_ids)
+
+    def combine_work(self, title, locations, work_ids, target, preview):
+        with self.mutation(), self.connect() as db:
+            if self.work_scope(db, locations, work_ids) != preview:
+                raise ValueError("Le regroupement a changé dans une autre fenêtre. Réessayez.")
+            for volume, path in locations:
+                if not db.execute(
+                    """SELECT 1 FROM entries JOIN roots ON roots.id = root_id
+                       JOIN collection_libraries ON collection_libraries.collection_id = roots.collection_id
+                       WHERE library = 'books' AND volume = ? AND volume_path = ? AND kind = 'file'""",
+                    (volume, path),
+                ).fetchone():
+                    raise ValueError("Un fichier ne figure plus dans la bibliothèque Livres.")
+            if target is None:
+                target = preview[0][0] if preview else None
+            if target is None:
+                if len(locations) < 2:
+                    raise ValueError("Choisissez au moins deux fichiers.")
+                target = db.execute("INSERT INTO works (title) VALUES (?)", (title,)).lastrowid
+            for work_id, _, _ in preview:
+                if work_id != target:
+                    db.execute(
+                        """INSERT OR IGNORE INTO work_tags (work_id, tag_id)
+                           SELECT ?, tag_id FROM work_tags WHERE work_id = ?""", (target, work_id)
+                    )
+                    db.execute("UPDATE work_members SET work_id = ? WHERE work_id = ?", (target, work_id))
+                    db.execute("DELETE FROM works WHERE id = ?", (work_id,))
+            db.executemany(
+                "INSERT OR IGNORE INTO work_members (volume, volume_path, work_id) VALUES (?, ?, ?)",
+                ((*location, target) for location in locations),
+            )
+
+    def remove_work_member(self, work_id, location):
+        with self.mutation(), self.connect() as db:
+            db.execute(
+                "DELETE FROM work_members WHERE work_id = ? AND volume = ? AND volume_path = ?",
+                (work_id, *location),
+            )
+            db.execute(
+                "DELETE FROM works WHERE id = ? AND NOT EXISTS (SELECT 1 FROM work_members WHERE work_id = ?)",
+                (work_id, work_id),
+            )
+
+    def work_classification(self, work_id):
+        with self.connect() as db:
+            return {row["id"]: (row["name"], row["applied"]) for row in db.execute(
+                """SELECT tags.id, tags.name, work_tags.tag_id IS NOT NULL AS applied
+                   FROM tags LEFT JOIN work_tags ON tag_id = tags.id AND work_id = ?
+                   WHERE library = 'books' ORDER BY name_key""", (work_id,)
+            )}
+
+    def classify_work(self, work_id, changes, new_names):
+        with self.mutation(), self.connect() as db:
+            if not db.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone():
+                raise ValueError("Cet ouvrage a changé dans une autre fenêtre.")
+            tags = {row[0] for row in db.execute("SELECT id FROM tags WHERE library = 'books'")}
+            if changes.keys() - tags:
+                raise ValueError("Un tag a changé dans une autre fenêtre. Rouvrez le dialogue.")
+            changes = dict(changes)
+            for name in new_names:
+                changes[self.write_tag(db, "books", name)] = True
+            for tag, apply in changes.items():
+                sql = ("INSERT OR IGNORE INTO work_tags (work_id, tag_id) VALUES (?, ?)"
+                       if apply else "DELETE FROM work_tags WHERE work_id = ? AND tag_id = ?")
+                db.execute(sql, (work_id, tag))
+
     def search(self, collection, query="", extension=None, sort="Nom", scope=None,
-               limit=200, offset=0, *, descending=None, library=None, shelf=None, locations=None):
+               limit=200, offset=0, *, descending=None, library=None, shelf=None, locations=None, grouped=False, metadata=None):
         terms = query.casefold().split()
         filters = [
             r"instr(fold(name || char(10) || full_path || char(10) || title || char(10) || author), ?) > 0"
             for _ in terms
         ]
         scope_filters, scope_args = self.file_filters(extension, scope)
-        filters.extend(scope_filters)
-        args = [*terms, *scope_args]
+        args = list(terms)
+        if metadata is not None:
+            filters.append("normalize(title) = ? AND normalize(author) = ?")
+            args.extend(metadata)
         if shelf is not None:
             predicate, values = self.classification_filter(library, shelf, "files.volume", "files.volume_path")
+            if grouped and isinstance(shelf, int):
+                predicate = f"""({predicate} OR EXISTS (
+                    SELECT 1 FROM work_tags WHERE work_tags.work_id = files.work_id AND tag_id = ?
+                ))"""
+                values = (*values, shelf)
             filters.append(predicate)
             args.extend(values)
         if locations is not None:
             filters.append("in_change_shelf(files.volume, files.volume_path) AND state != 'missing'")
-        where = " AND ".join(filters) or "1"
+        match = " AND ".join(filters) or "1"
+        scope_where = " AND ".join(scope_filters) or "1"
+        where = scope_where if grouped else f"({match}) AND ({scope_where})"
         collections_where, collections_args = self.collection_scope(collection, library)
+        if grouped:
+            collections_where += " AND collection_libraries.library = 'books'"
         order = SORTS[sort]
         if descending is None:
             descending = sort in DEFAULT_DESCENDING
@@ -717,7 +876,22 @@ class Catalogue:
         with self.connect() as db:
             if locations is not None:
                 db.create_function("in_change_shelf", 2, lambda volume, path: (volume, path) in locations)
-            return db.execute(
+            if metadata is not None:
+                db.create_function("normalize", 1, normalized, deterministic=True)
+            columns = ", works.id AS work_id, works.title AS work_title" if grouped else ""
+            joins = """LEFT JOIN work_members ON work_members.volume = roots.volume
+                           AND work_members.volume_path = entries.volume_path
+                       LEFT JOIN works ON works.id = work_members.work_id""" if grouped else ""
+            detected = "MIN(first_seen) OVER (PARTITION BY roots.volume, entries.volume_path)"
+            matching = ""
+            if grouped:
+                matching = f""", MAX(CASE WHEN {match} THEN 1 ELSE 0 END)
+                    OVER (PARTITION BY volume, volume_path) AS matched"""
+            tail = self.grouped_search_tail(sort, direction) if grouped else f"""
+                SELECT * FROM labeled
+                ORDER BY {order} {direction}, volume, volume_path LIMIT ? OFFSET ?
+            """
+            rows = db.execute(
                 f"""
                 WITH eligible AS (
                     SELECT collections.id, collections.name FROM collections
@@ -728,9 +902,10 @@ class Catalogue:
                            roots.path AS root_path, roots.state AS root_state,
                            eligible.name AS collection_name,
                            rtrim(roots.path, ?) || ? || entries.relative AS full_path,
-                           MIN(first_seen) OVER (PARTITION BY volume, volume_path) AS detected
+                           {detected} AS detected {columns}
                     FROM entries JOIN roots ON roots.id = root_id
                     JOIN eligible ON eligible.id = roots.collection_id
+                    {joins}
                     WHERE kind = 'file'
                 ), ranked AS (
                     SELECT *, ROW_NUMBER() OVER (
@@ -739,16 +914,57 @@ class Catalogue:
                             WHEN root_state IN ('available', 'partial') AND state = 'available' THEN 0
                             WHEN root_state IN ('available', 'partial') AND state = 'missing' THEN 2
                             ELSE 1 END, root_id
-                    ) AS preference
+                    ) AS preference {matching}
                     FROM files WHERE {where}
                 ), labeled AS (
                     SELECT *, {membership} AS collection_names FROM ranked WHERE preference = 1
                 )
-                SELECT * FROM labeled
-                ORDER BY {order} {direction}, volume, volume_path LIMIT ? OFFSET ?
+                {tail}
                 """,
-                (*collections_args, os.sep, os.sep, *args, limit, offset),
+                (*collections_args, os.sep, os.sep, *args, *scope_args, limit, offset),
             ).fetchall()
+            if not grouped:
+                return rows
+            return self.grouped_rows(rows)
+
+    @staticmethod
+    def grouped_search_tail(sort, direction):
+        order = "fold(coalesce(work_title, name))" if sort == "Nom" else SORTS[sort]
+        partition = """PARTITION BY work_id,
+                       CASE WHEN work_id IS NULL THEN volume END,
+                       CASE WHEN work_id IS NULL THEN volume_path END"""
+        return f"""
+            , work_rows AS (
+                SELECT *, MAX(matched) OVER ({partition}) AS visible,
+                       ROW_NUMBER() OVER ({partition} ORDER BY
+                           CASE WHEN root_state IN ('available', 'partial') AND state = 'available'
+                                THEN 0 ELSE 1 END,
+                           CASE WHEN extension = 'epub' THEN 0 ELSE 1 END,
+                           volume, volume_path) AS work_rank
+                FROM labeled
+            ), page AS (
+                SELECT work_id, volume, volume_path,
+                       ROW_NUMBER() OVER (ORDER BY {order} {direction}, volume, volume_path) AS position
+                FROM work_rows WHERE work_rank = 1 AND visible = 1
+                ORDER BY position LIMIT ? OFFSET ?
+            )
+            SELECT work_rows.* FROM page JOIN work_rows ON
+                page.work_id = work_rows.work_id OR
+                (page.work_id IS NULL AND page.volume = work_rows.volume AND page.volume_path = work_rows.volume_path)
+            ORDER BY page.position, work_rank
+        """
+
+    @staticmethod
+    def grouped_rows(rows):
+        results = []
+        for row in rows:
+            if row["work_id"] is None:
+                results.append(row)
+                continue
+            if row["work_rank"] == 1:
+                results.append(dict(row, title=row["work_title"], members=[]))
+            results[-1]["members"].append(row)
+        return results
 
     def synchronize(self, collection, progress=None, *, root_id=None, on_progress=None):
         with self.mutation():

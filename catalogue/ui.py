@@ -15,6 +15,7 @@ from .mosaic import Mosaic
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
 from .windows import explorer_target, select_in_explorer
+from .work_view import FormatFiles, ProposalDialog, WorkPicker, format_counts, format_label
 
 
 ALL_EXTENSIONS = "Toutes les extensions"
@@ -174,6 +175,9 @@ class App(ttk.Frame):
         self.roots = {}
         self.nodes = {}
         self.rows = {}
+        self.child_rows = {}
+        self.grouped_books = tk.BooleanVar(window, value=catalogue.groups_enabled())
+        self.expanded_format = None
         self.shelf = None
         self.shelf_items = {}
         self.change_library = None
@@ -269,6 +273,7 @@ class App(ttk.Frame):
                             command=self.change_results_view).pack(side="right", padx=(6, 0))
         self.scope_label = ttk.Label(result_header, text="", wraplength=450)
         self.scope_label.pack(side="left")
+        self.scope_label.bind("<Button-3>", lambda event: self.show_tile_menu(None, event))
         self.mosaic_sort = ttk.Frame(results)
         ttk.Label(self.mosaic_sort, text="Trier par").pack(side="left")
         self.sort_choice = ttk.Combobox(self.mosaic_sort, width=19, state="readonly")
@@ -277,15 +282,26 @@ class App(ttk.Frame):
         self.sort_direction = ttk.Button(self.mosaic_sort, width=12,
                                          command=lambda: self.sort_by(self.sort[0]))
         self.sort_direction.pack(side="left")
-        self.mosaic = Mosaic(results, self.select_tile, self.show_tile_menu, self.file_state, self.change_badge)
+        self.mosaic = Mosaic(
+            results, self.select_tile, self.show_tile_menu, self.file_state, self.change_badge, self.expand_format
+        )
+        self.mosaic_files = FormatFiles(results, self.annotated_state, self.show_member_menu, close=self.close_format)
         self.result_panes = ttk.Panedwindow(results, orient="horizontal")
         self.result_panes.pack(fill="both", expand=True)
         self.result_panes.bind("<Configure>", self.layout_detail)
         result_list = ttk.Frame(self.result_panes)
         self.result_panes.add(result_list, weight=1)
         self.detail_pane = DetailPane(self.result_panes)
+        self.detail_files = FormatFiles(self.detail_pane.panel, self.annotated_state, self.show_member_menu)
+        self.detail_pane.title.bind("<Button-3>", self.show_detail_menu)
         columns = ("name", "collections", "extension", "size", "modified", "detected", "state")
-        self.table = self.scroll_tree(result_list, columns=columns, show="headings", selectmode="extended")
+        self.table = self.scroll_tree(
+            result_list, columns=(*columns, "path"), displaycolumns=columns,
+            show="headings", selectmode="extended"
+        )
+        self.table.column("#0", width=28, minwidth=24, stretch=False)
+        self.table.column("path", width=470, stretch=False)
+        self.table.heading("path", text="Chemin")
         labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
         self.sort_choice.configure(values=labels)
@@ -297,6 +313,7 @@ class App(ttk.Frame):
         self.table.bind("<ButtonRelease-1>", self.end_column_resize)
         self.update_headings()
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
+        self.table.bind("<<TreeviewClose>>", self.drop_collapsed_members)
         self.table.bind("<Button-3>", self.show_file_menu)
         navigation = self.navigation = ttk.Frame(results)
         navigation.pack(fill="x")
@@ -666,18 +683,27 @@ class App(ttk.Frame):
         selected = set()
         active = anchor = None
         if library == self.result_library:
-            selected = {self.location(self.rows[item]) for item in self.table.selection()}
+            selected = {self.result_key(self.result_row(item)) for item in self.table.selection()}
             row = self.selected_file()
-            active = self.location(row) if row else None
-            if self.selection_anchor in self.rows:
-                anchor = self.location(self.rows[self.selection_anchor])
+            active = self.result_key(row) if row else None
+            anchor_row = self.result_row(self.selection_anchor)
+            anchor = self.result_key(anchor_row) if anchor_row else None
+        open_works = {
+            row["work_id"] for item, row in self.rows.items()
+            if self.is_work(row) and self.table.item(item, "open")
+        }
         self.result_library = library
+        self.close_format()
         self.table.delete(*self.table.get_children())
         self.rows.clear()
+        self.child_rows.clear()
+        grouped = self.grouping_active()
+        columns = (*self.headings, "path") if grouped else tuple(self.headings)
+        self.table.configure(show="tree headings" if grouped else "headings", displaycolumns=columns)
         rows = self.catalogue.search(
             self.collection_id(), self.query.get(), self.selected_extensions, self.sort[0],
             self.scope, PAGE_SIZE + 1, self.page * PAGE_SIZE, descending=self.sort[1],
-            library=self.filter_library(), shelf=self.personal_shelf(), locations=self.change_locations()
+            library=self.filter_library(), shelf=self.personal_shelf(), locations=self.change_locations(), grouped=grouped
         )
         if not rows and self.page:
             self.page -= 1
@@ -685,17 +711,21 @@ class App(ttk.Frame):
             return
         restored = {}
         for row in rows[:PAGE_SIZE]:
-            badge = self.change_badge(row)
-            state = self.file_state(row)
-            node = self.table.insert("", "end", values=(
-                row["name"], row["collection_names"], row["extension"], row["size"],
-                date_label(row["modified"]),
-                date_label(row["detected"]), f"{badge} · {state}" if badge else state
-            ))
+            work = self.is_work(row)
+            members = row["members"] if work else ()
+            open_work = work and (row["work_id"] in open_works or
+                                  any(self.result_key(member) in selected for member in members))
+            node = self.table.insert("", "end", values=self.result_values(row), open=open_work)
             self.rows[node] = row
-            location = self.location(row)
-            if location in selected:
-                restored[location] = node
+            key = self.result_key(row)
+            if key in selected:
+                restored[key] = node
+            for member in members:
+                child = self.table.insert(node, "end", values=self.result_values(member))
+                self.child_rows[child] = member
+                key = self.result_key(member)
+                if key in selected:
+                    restored[key] = child
         self.table.selection_set(*restored.values())
         self.selection_anchor = restored.get(anchor)
         if restored:
@@ -708,6 +738,40 @@ class App(ttk.Frame):
         if self.view_mode.get() == "mosaic":
             self.show_mosaic_page()
         self.update_details()
+
+    def grouping_active(self):
+        return self.library.get() == "books" and self.grouped_books.get()
+
+    @staticmethod
+    def is_work(row):
+        return isinstance(row, dict) and "members" in row
+
+    def result_key(self, row):
+        return (row["work_id"],) if self.is_work(row) else self.location(row)
+
+    def result_row(self, item):
+        return self.rows.get(item) or self.child_rows.get(item)
+
+    def drop_collapsed_members(self, _event):
+        hidden = [item for item in self.table.selection()
+                  if item in self.child_rows and not self.table.item(self.table.parent(item), "open")]
+        if hidden:
+            self.table.selection_remove(*hidden)
+
+    def annotated_state(self, row):
+        badge = self.change_badge(row)
+        state = self.file_state(row)
+        return f"{badge} · {state}" if badge else state
+
+    def result_values(self, row):
+        work = self.is_work(row)
+        extension = (" · ".join(format_label(*pair) for pair in format_counts(row["members"]))
+                     if work else row["extension"].upper() if self.grouping_active() else row["extension"])
+        values = (
+            row["title"] if work else row["name"], row["collection_names"], extension, row["size"],
+            date_label(row["modified"]), date_label(row["detected"]), self.annotated_state(row)
+        )
+        return (*values, "" if work else row["full_path"]) if self.grouping_active() else values
 
     def personal_shelf(self):
         return None if self.shelf in CHANGE_SHELVES else self.shelf
@@ -744,13 +808,15 @@ class App(ttk.Frame):
         return focus if focus in selected else selected[0] if selected else None
 
     def selected_file(self):
-        return self.rows.get(self.active_result())
+        return self.result_row(self.active_result())
 
     def click_result(self, event):
         self.begin_column_resize(event)
         if self.table.identify_region(event.x, event.y) in ("cell", "tree"):
             item = self.table.identify_row(event.y)
-            if item in self.rows:
+            if self.result_row(item) is not None:
+                if self.table.identify_column(event.x) == "#0":
+                    return None  # Keep the native disclosure control.
                 self.table.focus_set()
                 self.select_tile(item, event.state)
                 return "break"
@@ -780,6 +846,7 @@ class App(ttk.Frame):
             self.mosaic.pack(fill="both", expand=True, before=self.navigation)
             self.show_mosaic_page()
         else:
+            self.close_format()
             self.mosaic.hide()
             self.mosaic.pack_forget()
             self.mosaic_sort.pack_forget()
@@ -795,14 +862,44 @@ class App(ttk.Frame):
         else:
             self.list_details.pack(fill="x", before=self.bottom)
 
+    def mosaic_item(self, item):
+        return self.table.parent(item) if item in self.child_rows else item
+
     def show_mosaic_page(self):
-        self.mosaic.show_page(self.rows, self.library.get(), self.active_result(), self.table.selection())
+        self.mosaic.show_page(
+            self.rows, self.library.get(), self.mosaic_item(self.active_result()),
+            {self.mosaic_item(item) for item in self.table.selection()}
+        )
+
+    def expand_format(self, item, extension):
+        if self.expanded_format == (item, extension):
+            self.close_format()
+            return
+        row = self.rows[item]
+        members = [member for member in row["members"] if member["extension"] == extension]
+        self.select_tile(item)
+        self.expanded_format = item, extension
+        label = format_label(extension.upper(), len(members))
+        self.mosaic_files.show(members, f'{row["title"]} · {label} · Formats et emplacements')
+        self.mosaic_files.pack(fill="x", before=self.navigation, pady=(6, 3))
+
+    def close_format(self):
+        self.expanded_format = None
+        self.mosaic_files.pack_forget()
 
     def select_tile(self, item, modifiers=0):
+        if self.expanded_format and self.expanded_format[0] != item:
+            self.close_format()
         if modifiers & 0x0001:  # Shift
             order = list(self.rows)
-            anchor = self.selection_anchor or self.active_result() or item
-            start, end = sorted((order.index(anchor), order.index(item)))
+            if self.view_mode.get() != "mosaic":
+                order = [
+                    visible for parent in order
+                    for visible in (parent, *self.table.get_children(parent))
+                    if visible == parent or self.table.item(parent, "open")
+                ]
+            anchor = self.selection_anchor or self.active_result()
+            start, end = sorted((order.index(anchor) if anchor in order else order.index(item), order.index(item)))
             self.table.selection_set(*order[start:end + 1])
         elif modifiers & 0x0004:  # Control
             self.selection_anchor = item
@@ -816,7 +913,7 @@ class App(ttk.Frame):
 
     def show_tile_menu(self, item, event):
         self.file_menu = self.post_row_menu(
-            self.mosaic.canvas, self.rows[item], self.file_menu, event, item=item
+            event.widget, self.rows.get(item), self.file_menu, event, item=item, results=True
         )
 
     def sort_mosaic(self, _event):
@@ -833,7 +930,8 @@ class App(ttk.Frame):
 
     def update_details(self):
         row = self.selected_file()
-        self.full_path.set(row["full_path"] if row else "")
+        work = self.is_work(row)
+        self.full_path.set(row["full_path"] if row and not work else "")
         metadata = []
         state = ""
         if row:
@@ -849,20 +947,33 @@ class App(ttk.Frame):
             badge = self.change_badge(row)
             if badge:
                 metadata.insert(0, badge)
-            self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
+            if work:
+                self.details.set(f'{row["title"]} · {len(row["members"])} fichier(s) dans cette vue')
+            else:
+                self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
         if self.view_mode.get() == "detail":
             books = self.library.get() == "books" and row is not None and row["extension"] in BOOK_EXTENSIONS
-            if row:
+            if work:
+                tags = self.catalogue.work_classification(row["work_id"])
+                names = ", ".join(name for name, count in tags.values() if count)
+                metadata = [f"Tags de l’ouvrage : {names}"] if names else []
+                self.detail_files.show(row["members"])
+                self.detail_files.pack(fill="x", before=self.detail_pane.cover, pady=(4, 8))
+            else:
+                self.detail_files.pack_forget()
+            if row and not work:
                 tags, favorite = self.catalogue.classification(self.library.get(), (self.location(row),))
                 names = ", ".join(name for name, count in tags.values() if count)
                 if names:
                     metadata.append(f"Tags : {names}")
                 metadata.append("Favori" if favorite else "Hors favoris")
-            self.detail_pane.show(row, metadata, state, books)
+            self.detail_pane.show(row, metadata, state, books, work=work)
         elif self.view_mode.get() == "mosaic":
-            self.mosaic.select_item(self.active_result(), self.table.selection())
+            self.mosaic.select_item(
+                self.mosaic_item(self.active_result()), {self.mosaic_item(item) for item in self.table.selection()}
+            )
         self.update_buttons()
 
     @property
@@ -909,8 +1020,9 @@ class App(ttk.Frame):
         )
         self.add_button.configure(state="normal" if active and collection else "disabled")
         self.sync_button.configure(state="normal" if active and self.has_roots(collection) else "disabled")
+        row = self.selected_file()
         self.relocate_button.configure(
-            state="normal" if active and (self.scope or self.selected_file()) else "disabled"
+            state="normal" if active and (self.scope or (row and not self.is_work(row))) else "disabled"
         )
 
     def new_collection(self):
@@ -1020,7 +1132,7 @@ class App(ttk.Frame):
             return
         if root is None:
             row = self.selected_file()
-            root_id = self.scope[0] if self.scope else row["root_id"] if row else None
+            root_id = self.scope[0] if self.scope else row["root_id"] if row and not self.is_work(row) else None
             root = self.roots.get(root_id)
         if root is None:
             return
@@ -1036,7 +1148,16 @@ class App(ttk.Frame):
                 messagebox.showerror("Relocalisation", str(exc), parent=self)
 
     def show_file_menu(self, event):
-        self.file_menu = self.post_file_menu(self.table, self.rows, self.file_menu, event)
+        self.file_menu = self.post_file_menu(self.table, self.rows | self.child_rows, self.file_menu, event)
+
+    def show_detail_menu(self, event):
+        item = self.active_result()
+        self.file_menu = self.post_row_menu(
+            event.widget, self.result_row(item), self.file_menu, event, item=item, results=True
+        )
+
+    def show_member_menu(self, widget, row, event):
+        self.file_menu = self.post_row_menu(widget, row, self.file_menu, event, member=True)
 
     def post_file_menu(self, table, rows, previous, event):
         if table.identify_region(event.x, event.y) not in ("cell", "tree"):
@@ -1045,27 +1166,47 @@ class App(ttk.Frame):
         row = rows.get(item)
         if row is None:
             return previous
-        return self.post_row_menu(table, row, previous, event, item=item if table is self.table else None)
+        results = table is self.table
+        return self.post_row_menu(table, row, previous, event, item=item if results else None, results=results)
 
-    def post_row_menu(self, widget, row, previous, event, *, item=None):
+    def post_row_menu(self, widget, row, previous, event, *, item=None, results=False, member=False):
+        work = self.is_work(row)
+        books = self.library.get() == "books"
+        if row is None and (not results or not books or self.busy):
+            return previous
         if previous is not None:
             previous.destroy()
         menu = tk.Menu(widget, tearoff=False)
-        menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
-        menu.add_command(label="Afficher dans l’Explorateur",
-                         command=lambda: self.show_in_explorer(row, widget.winfo_toplevel()))
-        if item is not None and not self.busy:
-            self.add_classification_menu(menu, item)
+        if row is not None and not work:
+            menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
+            menu.add_command(label="Afficher dans l’Explorateur",
+                             command=lambda: self.show_in_explorer(row, widget.winfo_toplevel()))
+        if not self.busy and (results or member):
+            targets = self.menu_targets(item, row)
+            if row is not None and not work:
+                self.add_classification_menu(menu, targets)
+            if books:
+                if work or (row is not None and row["extension"] in BOOK_EXTENSIONS):
+                    self.add_work_menu(menu, row, targets)
+                if row is not None:
+                    menu.add_separator()
+                menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
+                                     command=self.toggle_grouping)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
         return menu
 
-    def add_classification_menu(self, menu, item):
+    def menu_targets(self, item, row):
         selected = self.table.selection()
-        targets = selected if item in selected else (item,)
-        locations = tuple(dict.fromkeys(self.location(self.rows[target]) for target in targets))
+        if item in selected:
+            return [self.result_row(target) for target in selected
+                    if target not in self.child_rows or self.table.item(self.table.parent(target), "open")]
+        return [row] if row is not None else []
+
+    def add_classification_menu(self, menu, targets):
+        locations = tuple(dict.fromkeys(self.location(row) for row in targets if not self.is_work(row)))
         library = self.library.get()
         tags, favorites = self.catalogue.classification(library, locations)
         count = len(locations)
@@ -1084,6 +1225,96 @@ class App(ttk.Frame):
                 menu.add_command(label=label + suffix, command=lambda value=favorite: self.write_classification(
                     lambda: self.catalogue.set_favorites(library, locations, value)
                 ))
+
+    def toggle_grouping(self):
+        enabled = self.grouped_books.get()
+        try:
+            self.catalogue.save_groups_enabled(enabled)
+        except (OSError, sqlite3.Error) as exc:
+            self.grouped_books.set(not enabled)
+            messagebox.showerror("Regroupement", str(exc), parent=self.window)
+            return
+        self.refresh_results()
+
+    def add_work_menu(self, menu, row, targets):
+        work = self.is_work(row)
+        if work:
+            menu.add_command(label="Gérer les tags de l’ouvrage…", command=lambda: self.edit_work_tags(row))
+            menu.add_command(label="Fusionner avec un ouvrage…", command=lambda: self.pick_work(row))
+        else:
+            menu.add_separator()
+            menu.add_command(label="Proposer un regroupement…", command=lambda: self.propose_work(row))
+            menu.add_command(label="Ajouter à un ouvrage…", command=lambda: self.pick_work(row))
+            membership = self.catalogue.work_at(self.location(row))
+            if membership:
+                work_id = membership["work_id"]
+                menu.add_command(label="Retirer ce fichier de l’ouvrage", command=lambda: self.write_classification(
+                    lambda: self.catalogue.remove_work_member(work_id, self.location(row))
+                ))
+        candidates = [target for target in targets if self.is_work(target) or target["extension"] in BOOK_EXTENSIONS]
+        if len(candidates) > 1:
+            menu.add_command(label=f"Regrouper la sélection… ({len(candidates)})",
+                             command=lambda: self.combine_work(row, candidates))
+
+    def edit_work_tags(self, row):
+        work_id = row["work_id"]
+        TagDialog(
+            self.window, self.catalogue.work_classification(work_id), 1,
+            lambda changes, new: self.write_classification(
+                lambda: self.catalogue.classify_work(work_id, changes, new)
+            ), subject=f'Ouvrage · {row["title"]}',
+        )
+
+    def propose_work(self, row):
+        candidates = self.catalogue.suggested_editions(row)
+        if not candidates:
+            messagebox.showinfo(
+                "Regroupement", "Aucun rapprochement titre-auteurs dans plusieurs formats.", parent=self.window
+            )
+            return
+        chosen = ProposalDialog(self.window, row["title"], candidates).result
+        if chosen:
+            self.combine_work(row, chosen)
+
+    def pick_work(self, row):
+        source = row["work_id"] if self.is_work(row) else None
+        works = [work for work in self.catalogue.works() if work["id"] != source]
+        if not works:
+            messagebox.showinfo("Regroupement", "Aucun autre ouvrage disponible.", parent=self.window)
+            return
+        target = WorkPicker(
+            self.window, works, "Fusionner avec un ouvrage" if source else "Ajouter à un ouvrage"
+        ).result
+        if target is not None:
+            self.combine_work(row, [row], target=target)
+
+    def combine_work(self, row, candidates, *, target=None):
+        locations = tuple(dict.fromkeys(self.location(file) for file in candidates if not self.is_work(file)))
+        work_ids = {work["work_id"] for work in candidates if self.is_work(work)}
+        if target is not None:
+            work_ids.add(target)
+        try:
+            preview = self.catalogue.preview_work(locations, work_ids)
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("Regroupement", str(exc), parent=self.window)
+            return
+        title = row["title"] or Path(row["name"]).stem
+        if preview:
+            if target is None:
+                target = row["work_id"] if self.is_work(row) else preview[0][0]
+            destination = next(name for work_id, name, _ in preview if work_id == target)
+            lines = "\n".join(f"• {name} · {count} fichier(s)" for _, name, count in preview)
+            if not messagebox.askyesno(
+                "Valider le regroupement",
+                f"Fiche finale « {destination} »\n\nOuvrages concernés\n{lines}\n\n"
+                f"Fichiers sélectionnés individuellement · {len(locations)}\n"
+                "Les tags des ouvrages réunis seront conservés. Continuer ?",
+                default="no", parent=self.window,
+            ):
+                return
+        self.write_classification(
+            lambda: self.catalogue.combine_work(title, locations, work_ids, target, preview)
+        )
 
     def copy_path(self, row):
         self.clipboard_clear()
@@ -1269,6 +1500,7 @@ class App(ttk.Frame):
         self.load_column_widths()
         self.library.set(UNCLASSIFIED if self.catalogue.collections(UNCLASSIFIED) else "books")
         self.view_mode.set(self.catalogue.results_view())
+        self.grouped_books.set(self.catalogue.groups_enabled())
         self.query.set("")
         self.table.selection_remove(*self.table.selection())
         self.selection_anchor = None
