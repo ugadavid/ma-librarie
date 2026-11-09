@@ -106,7 +106,8 @@ class ClassificationTests(unittest.TestCase):
         window.update()
 
         def view(mode):
-            app.view_mode.set(mode)
+            app.view_mode.set("mosaic" if mode == "mosaic" else "list")
+            app.details_visible.set(mode == "detail")
             app.change_results_view()
             window.update()
 
@@ -343,7 +344,7 @@ class ClassificationTests(unittest.TestCase):
         self.addCleanup(window.destroy)
         app = App(window, self.db)
         window.update()
-        menu = window.nametowidget(app.catalogue_button.cget("menu"))
+        menu = app.catalogue_menu
 
         def settle():
             deadline = time.monotonic() + 8
@@ -356,7 +357,7 @@ class ClassificationTests(unittest.TestCase):
         archive = self.base / "Catalogue tagué.sqlite3"
         with patch("catalogue.ui.filedialog.asksaveasfilename", return_value=str(archive)), \
                 patch("catalogue.ui.messagebox.showerror") as error:
-            menu.invoke(0)
+            menu.invoke("Sauvegarder le catalogue…")
             settle()
         error.assert_not_called()
         self.assertEqual((4, 5), backups.validate(archive))
@@ -368,7 +369,7 @@ class ClassificationTests(unittest.TestCase):
                     patch("catalogue.ui.messagebox.askyesno", return_value=True), \
                     patch("catalogue.ui.messagebox.showerror") as error, \
                     patch("catalogue.store.inventory") as inventory:
-                menu.invoke(1)
+                menu.invoke("Restaurer une sauvegarde…")
                 settle()
             error.assert_not_called()
             inventory.assert_not_called()

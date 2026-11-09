@@ -346,13 +346,27 @@ class Catalogue:
             row = db.execute("SELECT value FROM ui_preferences WHERE name = 'results_view'").fetchone()
         return row["value"] if row and row["value"] in ("detail", "mosaic") else "list"
 
-    def save_results_view(self, mode):
+    def view_preferences(self):
+        with self.connect() as db:
+            values = dict(db.execute(
+                "SELECT name, value FROM ui_preferences WHERE name IN ('results_view', 'details_visible')"
+            ))
+        mode = values.get("results_view")
+        return ("mosaic" if mode == "mosaic" else "list",
+                mode == "detail" or values.get("details_visible") == "1")
+
+    def save_results_view(self, mode, *, details=None):
         with self.connect() as db:
             db.execute(
                 """INSERT INTO ui_preferences (name, value) VALUES ('results_view', ?)
                    ON CONFLICT (name) DO UPDATE SET value = excluded.value""",
                 (mode,),
             )
+            if details is not None:
+                db.execute(
+                    """INSERT INTO ui_preferences (name, value) VALUES ('details_visible', ?)
+                       ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (str(int(details)),)
+                )
 
     def groups_enabled(self):
         with self.connect() as db:

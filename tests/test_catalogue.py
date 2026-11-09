@@ -439,7 +439,7 @@ class CatalogueTests(unittest.TestCase):
         branch, = app.tree.get_children(root)
         app.tree.selection_set(branch)
         app.select_scope()
-        self.assertEqual("disabled", app.manage_menu.entrycget(3, "state"))
+        self.assertIsNone(app.selected_root())
         with patch("catalogue.ui.simpledialog.askstring", return_value=None) as prompt:
             app.rename_collection()
             self.assertEqual("Livres", prompt.call_args.kwargs["initialvalue"])
@@ -471,13 +471,13 @@ class CatalogueTests(unittest.TestCase):
         root = next(node for node, scope in app.nodes.items() if scope == (self.root_id, ""))
         app.tree.selection_set(root)
         app.select_scope()
-        self.assertEqual("normal", app.manage_menu.entrycget(3, "state"))
+        self.assertEqual(self.root_id, app.selected_root()["id"])
         with patch("catalogue.ui.messagebox.askyesno", return_value=False) as confirm:
             app.remove_root()
             self.assertIn(str(self.books), confirm.call_args.args[1])
         app.scanning = True
-        app.update_buttons()
-        self.assertTrue(app.manage_button.instate(["disabled"]))
+        app.update_controls()
+        self.assertEqual("disabled", app.catalogue_menu.entrycget("Nouvelle collection…", "state"))
         with patch("catalogue.ui.messagebox.askyesno") as confirm:
             app.remove_root()
             app.delete_collection()
@@ -495,8 +495,7 @@ class CatalogueTests(unittest.TestCase):
             self.assertEqual(contents, (self.book.read_bytes(), self.book.stat().st_mtime_ns))
             app.delete_collection()
         self.assertIsNone(app.active_collection)
-        self.assertTrue(app.manage_button.instate(["disabled"]))
-        self.assertFalse(app.new_button.instate(["disabled"]))
+        self.assertEqual("normal", app.catalogue_menu.entrycget("Nouvelle collection…", "state"))
         with patch("catalogue.ui.simpledialog.askstring", return_value="Recréée"):
             app.new_collection()
         self.assertEqual("Recréée", app.active_collection["name"])
@@ -598,7 +597,7 @@ class CatalogueTests(unittest.TestCase):
                 time.sleep(0.02)
             self.assertFalse(app.scanning)
             self.assertIsNone(app.scan_window)
-            self.assertFalse(app.sync_button.instate(["disabled"]))
+            self.assertFalse(app.busy)
 
         scandir = os.scandir
 
@@ -611,14 +610,14 @@ class CatalogueTests(unittest.TestCase):
                 patch("catalogue.store.os.scandir", side_effect=deny_source):
             app.add_root()
             self.assertTrue(app.scanning)
-            self.assertTrue(app.add_button.instate(["disabled"]))
+            self.assertEqual("disabled", app.catalogue_menu.entrycget("Nouvelle collection…", "state"))
             self.assertIsNotNone(app.scan_window)
             finish()
         self.assertEqual("error", self.db.roots(collection)[0]["state"])
         self.assertIn("Refus témoin", app.errors[0])
         self.assertFalse(app.error_button.instate(["disabled"]))
 
-        app.sync_button.invoke()
+        app.synchronize()
         finish()
         self.assertEqual("available", self.db.roots(collection)[0]["state"])
         self.assertEqual({"Guide.pdf", "Ubik.epub"}, {row["name"] for row in app.rows.values()})
@@ -934,7 +933,7 @@ class CatalogueTests(unittest.TestCase):
         window.update()
         saved = app.scope, app.sort, app.selected_extensions, app.query.get()
         self.assertFalse(app.rows)
-        app.duplicate_button.invoke()
+        app.search_menu.invoke("Rechercher les doublons…")
         view = app.duplicate_window
         deadline = time.monotonic() + 10
         while view.running and time.monotonic() < deadline:
@@ -1138,8 +1137,7 @@ class CatalogueTests(unittest.TestCase):
 
         with patch("catalogue.detail_pane.load_cover", side_effect=load):
             app.table.selection_set(ids[self.book.name])
-            app.view_mode.set("detail")
-            app.change_results_view()
+            app.display_menu.invoke("Volet de détails")
             wait_for(started.is_set)
             self.assertTrue(app.detail_pane.winfo_ismapped())
             self.assertEqual(ids[self.book.name], app.table.selection()[0])
@@ -1161,7 +1159,8 @@ class CatalogueTests(unittest.TestCase):
         app.destroy()
         reopened = App(window, store.Catalogue(self.filename))
         window.update()
-        self.assertEqual("detail", reopened.view_mode.get())
+        self.assertEqual("list", reopened.view_mode.get())
+        self.assertTrue(reopened.details_visible.get())
         self.assertIn(str(reopened.detail_pane), reopened.result_panes.panes())
 
     def test_mosaic_shares_selection_order_and_file_menu(self):
@@ -1191,18 +1190,17 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(app.rows[second]["full_path"], window.clipboard_get())
         self.assertEqual((original[0],), app.table.selection())
 
-        app.sort_choice.set("Taille")
-        app.sort_choice.event_generate("<<ComboboxSelected>>")
+        app.sort_menu.invoke("Taille")
         window.update()
         self.assertEqual(("Taille", False), app.sort)
         self.assertEqual(sorted(row["size"] for row in app.rows.values()),
                          [row["size"] for _, row in app.mosaic.entries])
-        app.sort_direction.invoke()
+        app.sort_menu.invoke("Décroissant")
         self.assertEqual(("Taille", True), app.sort)
         selected = next(iter(app.rows))
         app.select_tile(selected)
-        app.view_mode.set("detail")
-        app.change_results_view()
+        app.display_menu.invoke("Liste")
+        app.display_menu.invoke("Volet de détails")
         window.update()
         self.assertEqual((selected,), app.table.selection())
         self.assertEqual(app.rows[selected]["full_path"], app.detail_pane.path.get())
@@ -1262,7 +1260,7 @@ class CatalogueTests(unittest.TestCase):
         app = App(window, self.db)
         self.assertFalse(app.rows)
         app.load_collections(self.collection)
-        app.sync_button.invoke()
+        app.synchronize()
 
         def finish_scan():
             deadline = time.monotonic() + 10
@@ -1274,7 +1272,7 @@ class CatalogueTests(unittest.TestCase):
 
         finish_scan()
         self.books.rename(self.books.with_name("Débranché"))
-        app.sync_button.invoke()
+        app.synchronize()
         finish_scan()
         app.query.set("DICK")
         app.refresh_results()

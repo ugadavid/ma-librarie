@@ -5,6 +5,7 @@ import threading
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .backups import CatalogueSession, prepare_restore, restore_backup, save_backup
@@ -195,7 +196,9 @@ class App(ttk.Frame):
         self.pending_search = None
         self.selected_extensions = None
         self.scope = None
-        self.view_mode = tk.StringVar(window, value=catalogue.results_view())
+        mode, details = catalogue.view_preferences()
+        self.view_mode = tk.StringVar(window, value=mode)
+        self.details_visible = tk.BooleanVar(window, value=details)
         self.detail_layout_pending = False
         self.pack(fill="both", expand=True)
         self.build()
@@ -213,33 +216,6 @@ class App(ttk.Frame):
             )
             button.pack(side="left", padx=(0, 14))
             self.library_buttons[key] = button
-        self.duplicate_button = ttk.Button(
-            libraries, text="Rechercher les doublons", command=self.open_duplicates
-        )
-        self.duplicate_button.pack(side="right")
-
-        top = ttk.Frame(self)
-        top.pack(fill="x", pady=(0, 8))
-        self.catalogue_button = ttk.Menubutton(libraries, text="Catalogue")
-        menu = tk.Menu(self.catalogue_button, tearoff=False)
-        menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
-        menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
-        self.catalogue_button.configure(menu=menu)
-        self.catalogue_button.pack(side="left", padx=(0, 5))
-        self.new_button = ttk.Button(top, text="Nouvelle collection", command=self.new_collection)
-        self.manage_button = ttk.Menubutton(top, text="Gérer la collection")
-        self.manage_menu = tk.Menu(self.manage_button, tearoff=False)
-        self.manage_menu.add_command(label="Renommer la collection…", command=self.rename_collection)
-        self.manage_menu.add_command(label="Supprimer la collection…", command=self.delete_collection)
-        self.manage_menu.add_separator()
-        self.manage_menu.add_command(label="Retirer ce dossier source…", command=self.remove_root)
-        self.remove_root_item = self.manage_menu.index("end")
-        self.manage_button.configure(menu=self.manage_menu)
-        self.add_button = ttk.Button(top, text="Ajouter un dossier…", command=self.add_root)
-        self.relocate_button = ttk.Button(top, text="Relocaliser…", command=self.relocate)
-        self.sync_button = ttk.Button(top, text="Synchroniser", command=self.synchronize)
-        for button in (self.new_button, self.manage_button, self.add_button, self.relocate_button, self.sync_button):
-            button.pack(side="left", padx=(0, 5))
 
         search_bar = ttk.Frame(self)
         search_bar.pack(fill="x", pady=(0, 8))
@@ -248,8 +224,7 @@ class App(ttk.Frame):
         self.search_entry = ttk.Entry(search_bar, textvariable=self.query)
         self.search_entry.pack(side="left", fill="x", expand=True, padx=6)
         self.query.trace_add("write", self.schedule_search)
-        self.extension_button = ttk.Button(search_bar, command=self.edit_extensions)
-        self.extension_button.pack(side="left", padx=(0, 6))
+        self.format_indicator = ttk.Label(search_bar)
 
         panes = ttk.Panedwindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -258,30 +233,29 @@ class App(ttk.Frame):
         panes.add(sources, weight=1)
         panes.add(results, weight=4)
 
-        ttk.Label(sources, text="Rayons, collections et dossiers").pack(anchor="w")
+        ttk.Label(sources, text="Rayons et collections").pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
         self.tree.column("#0", width=245, stretch=True)
         self.tree.tag_configure("automatic", foreground="#245284")
         self.tree.bind("<<TreeviewOpen>>", self.expand_tree)
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
         self.tree.bind("<Button-3>", self.show_context_menu)
+        self.bind_context_keys(self.tree, self.show_context_menu)
 
-        result_header = ttk.Frame(results)
-        result_header.pack(fill="x")
-        for label, mode in (("Mosaïque", "mosaic"), ("Détail", "detail"), ("Liste", "list")):
-            ttk.Radiobutton(result_header, text=label, value=mode, variable=self.view_mode,
-                            command=self.change_results_view).pack(side="right", padx=(6, 0))
-        self.scope_label = ttk.Label(result_header, text="", wraplength=450)
-        self.scope_label.pack(side="left")
-        self.scope_label.bind("<Button-3>", lambda event: self.show_tile_menu(None, event))
-        self.mosaic_sort = ttk.Frame(results)
-        ttk.Label(self.mosaic_sort, text="Trier par").pack(side="left")
-        self.sort_choice = ttk.Combobox(self.mosaic_sort, width=19, state="readonly")
-        self.sort_choice.pack(side="left", padx=5)
-        self.sort_choice.bind("<<ComboboxSelected>>", self.sort_mosaic)
-        self.sort_direction = ttk.Button(self.mosaic_sort, width=12,
-                                         command=lambda: self.sort_by(self.sort[0]))
-        self.sort_direction.pack(side="left")
+        self.result_header = ttk.Frame(results, padding=(0, 0, 0, 5))
+        self.result_header.pack(fill="x")
+        self.result_header.columnconfigure(0, weight=1)
+        self.scope_label = ttk.Label(self.result_header)
+        self.scope_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+
+        self.navigation = ttk.Frame(self.result_header)
+        self.navigation.grid(row=0, column=1, sticky="e")
+        self.previous = ttk.Button(self.navigation, text="Précédent", command=lambda: self.move_page(-1))
+        self.next = ttk.Button(self.navigation, text="Suivant", command=lambda: self.move_page(1))
+        self.page_label = ttk.Label(self.navigation, width=12, anchor="center", justify="center", wraplength=96)
+        for widget in (self.previous, self.page_label, self.next):
+            widget.pack(side="left")
+        self.result_header.bind("<Configure>", self.layout_results_header)
         self.mosaic = Mosaic(
             results, self.select_tile, self.show_tile_menu, self.file_state, self.change_badge, self.expand_format
         )
@@ -304,7 +278,7 @@ class App(ttk.Frame):
         self.table.heading("path", text="Chemin")
         labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
-        self.sort_choice.configure(values=labels)
+        self.build_menus()
         self.default_widths = dict(zip(columns, (235, 155, 85, 85, 125, 145, 105)))
         for column, minimum in zip(columns, (95, 95, 64, 65, 92, 105, 80)):
             self.table.column(column, minwidth=minimum, stretch=False)
@@ -315,14 +289,10 @@ class App(ttk.Frame):
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
         self.table.bind("<<TreeviewClose>>", self.drop_collapsed_members)
         self.table.bind("<Button-3>", self.show_file_menu)
-        navigation = self.navigation = ttk.Frame(results)
-        navigation.pack(fill="x")
-        self.previous = ttk.Button(navigation, text="Précédent", command=lambda: self.move_page(-1))
-        self.next = ttk.Button(navigation, text="Suivant", command=lambda: self.move_page(1))
-        self.previous.pack(side="left")
-        self.next.pack(side="left", padx=4)
-        self.page_label = ttk.Label(navigation)
-        self.page_label.pack(side="left", padx=6)
+        self.bind_context_keys(self.table, self.show_file_menu)
+        self.bind_context_keys(self.mosaic.canvas, self.mosaic.context, mosaic=True)
+        for files in (self.mosaic_files, self.detail_files):
+            self.bind_context_keys(files.table, files.context)
 
         details = self.list_details = ttk.Frame(self, padding=(0, 8))
         details.pack(fill="x")
@@ -339,6 +309,84 @@ class App(ttk.Frame):
         self.error_button.pack(side="right")
         self.error_button.state(["disabled"])
         self.apply_results_view()
+
+    def build_menus(self):
+        self.menubar = tk.Menu(self, tearoff=False)
+        self.window.configure(menu=self.menubar)
+        self.catalogue_menu = tk.Menu(self.menubar, tearoff=False)
+        self.search_menu = tk.Menu(self.menubar, tearoff=False)
+        self.display_menu = tk.Menu(self.menubar, tearoff=False)
+        for label, menu in (("Catalogue", self.catalogue_menu), ("Recherche", self.search_menu),
+                            ("Affichage", self.display_menu)):
+            self.menubar.add_cascade(label=label, menu=menu, underline=0)
+
+        self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
+        self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
+        self.catalogue_menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
+
+        self.search_menu.add_command(label="Filtrer par extension…", command=self.edit_extensions)
+        self.search_menu.add_command(label="Réinitialiser le filtre", command=self.reset_extensions)
+        self.search_menu.add_command(label="Rechercher les doublons…", command=self.open_duplicates)
+
+        for label, mode in (("Liste", "list"), ("Mosaïque", "mosaic")):
+            self.display_menu.add_radiobutton(label=label, variable=self.view_mode, value=mode,
+                                              command=self.change_results_view)
+        self.display_menu.add_checkbutton(label="Volet de détails", variable=self.details_visible,
+                                          command=self.change_results_view)
+        self.sort_menu = tk.Menu(self.display_menu, tearoff=False)
+        self.sort_column = tk.StringVar(self.window)
+        self.sort_descending = tk.BooleanVar(self.window)
+        for label in self.headings.values():
+            self.sort_menu.add_radiobutton(
+                label=label, value=label, variable=self.sort_column, command=self.choose_sort_column
+            )
+        self.sort_menu.add_separator()
+        for label, descending in (("Croissant", False), ("Décroissant", True)):
+            self.sort_menu.add_radiobutton(
+                label=label, value=descending, variable=self.sort_descending, command=self.choose_sort_order
+            )
+        self.display_menu.add_cascade(label="Trier par", menu=self.sort_menu)
+        self.display_menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
+                                          command=self.toggle_grouping)
+
+    def layout_results_header(self, event):
+        width = event.width
+        pagination_width = self.navigation.winfo_reqwidth()
+        separate = width < pagination_width + 150
+        row = 1 if separate else 0
+        if int(self.navigation.grid_info()["row"]) != row:
+            self.navigation.grid_configure(row=row, column=0 if separate else 1,
+                                           sticky="w" if separate else "e", pady=(3, 0) if separate else 0)
+        wrap = max(60, width - (0 if separate else pagination_width + 12))
+        self.scope_label.configure(wraplength=wrap)
+
+    def bind_context_keys(self, widget, handler, *, mosaic=False):
+        def open_context(_event):
+            if mosaic:
+                item = self.mosaic_item(self.active_result())
+                if item not in self.mosaic.tiles:
+                    return "break"
+                self.mosaic.reveal(item)
+                x, y, _, _ = widget.coords(self.mosaic.tiles[item][0])
+                x, y = int(x - widget.canvasx(0) + 8), int(y - widget.canvasy(0) + 8)
+            else:
+                item = widget.focus() or next(iter(widget.selection()), None)
+                if not item:
+                    return "break"
+                widget.see(item)
+                widget.update_idletasks()
+                bounds = widget.bbox(item)
+                if not bounds:
+                    return "break"
+                _, top, _, height = bounds
+                x, y = 8, top + height // 2
+            event = SimpleNamespace(widget=widget, x=x, y=y, x_root=widget.winfo_rootx() + x,
+                                    y_root=widget.winfo_rooty() + y)
+            handler(event)
+            return "break"
+
+        widget.bind("<Shift-F10>", open_context)
+        widget.bind("<Menu>", open_context)
 
     @staticmethod
     def scroll_tree(parent, selectmode="browse", **options):
@@ -435,8 +483,10 @@ class App(ttk.Frame):
     def update_extension_label(self):
         selected = self.selected_extensions
         if selected is None:
-            label = ALL_EXTENSIONS
-        elif not selected:
+            self.format_indicator.configure(text="")
+            self.format_indicator.pack_forget()
+            return
+        if not selected:
             label = "Aucune extension"
         else:
             label = next((name for name, formats in EXTENSION_PRESETS.items() if selected == formats),
@@ -444,9 +494,19 @@ class App(ttk.Frame):
             if label is None:
                 label = (extension_label(next(iter(selected))) if len(selected) == 1
                          else f"{len(selected)} extensions")
-        self.extension_button.configure(text=f"Extensions · {label}")
+        self.format_indicator.configure(text=f"Formats · {label}")
+        self.format_indicator.pack(side="left", padx=(0, 6))
+
+    def reset_extensions(self):
+        if not self.busy and self.selected_extensions is not None:
+            try:
+                self.apply_extensions(self.collection_id(), None, library=self.filter_library())
+            except sqlite3.Error as exc:
+                messagebox.showerror("Extensions", str(exc), parent=self.window)
 
     def edit_extensions(self):
+        if self.busy:
+            return
         collection = self.collection_id()
         library = self.filter_library()
         ExtensionDialog(
@@ -650,14 +710,26 @@ class App(ttk.Frame):
 
     def sort_by(self, column):
         current, descending = self.sort
-        self.sort = column, not descending if column == current else False
+        self.set_sort(column, not descending if column == current else False)
+
+    def choose_sort_column(self):
+        column = self.sort_column.get()
+        if column != self.sort[0]:
+            self.set_sort(column, False)
+
+    def choose_sort_order(self):
+        self.set_sort(self.sort[0], self.sort_descending.get())
+
+    def set_sort(self, column, descending):
+        if not self.busy and (column, descending) != self.sort:
+            self.sort = column, descending
+            self.refresh_results()
         self.update_headings()
-        self.refresh_results()
 
     def update_headings(self):
         active, descending = self.sort
-        self.sort_choice.set(active)
-        self.sort_direction.configure(text="Décroissant" if descending else "Croissant")
+        self.sort_column.set(active)
+        self.sort_descending.set(descending)
         for column, label in self.headings.items():
             arrow = (" ▼" if descending else " ▲") if label == active else ""
             display = "Taille (o)" if label == "Taille" else label
@@ -821,38 +893,46 @@ class App(ttk.Frame):
                 self.select_tile(item, event.state)
                 return "break"
 
+    def details_open(self):
+        return self.view_mode.get() == "list" and self.details_visible.get()
+
     def change_results_view(self):
+        if self.busy:
+            return
         try:
-            self.catalogue.save_results_view(self.view_mode.get())
+            self.catalogue.save_results_view(self.view_mode.get(), details=self.details_visible.get())
         except sqlite3.Error as exc:
+            mode, details = self.catalogue.view_preferences()
+            self.view_mode.set(mode)
+            self.details_visible.set(details)
             messagebox.showerror("Vue des résultats", str(exc), parent=self)
         self.apply_results_view()
         self.update_details()
         if self.view_mode.get() == "mosaic":
             self.mosaic.canvas.focus_set()
-        elif self.table.selection():
-            self.table.focus(self.active_result())
+        else:
+            if self.table.selection():
+                self.table.focus(self.active_result())
             self.table.focus_set()
 
     def apply_results_view(self):
         mode = self.view_mode.get()
+        details = self.details_open()
         attached = str(self.detail_pane) in self.result_panes.panes()
-        if mode != "detail" and attached:
+        if not details and attached:
             self.detail_pane.hide()
             self.result_panes.forget(self.detail_pane)
         if mode == "mosaic":
             self.result_panes.pack_forget()
-            self.mosaic_sort.pack(fill="x", before=self.navigation)
-            self.mosaic.pack(fill="both", expand=True, before=self.navigation)
+            self.mosaic.pack(fill="both", expand=True, after=self.result_header)
             self.show_mosaic_page()
         else:
             self.close_format()
             self.mosaic.hide()
             self.mosaic.pack_forget()
-            self.mosaic_sort.pack_forget()
-            self.result_panes.pack(fill="both", expand=True, before=self.navigation)
+            self.result_panes.pack(fill="both", expand=True, after=self.result_header)
 
-        if mode == "detail":
+        if details:
             self.list_details.pack_forget()
             if not attached:
                 self.result_panes.add(self.detail_pane, weight=1)
@@ -881,7 +961,7 @@ class App(ttk.Frame):
         self.expanded_format = item, extension
         label = format_label(extension.upper(), len(members))
         self.mosaic_files.show(members, f'{row["title"]} · {label} · Formats et emplacements')
-        self.mosaic_files.pack(fill="x", before=self.navigation, pady=(6, 3))
+        self.mosaic_files.pack(fill="x", after=self.mosaic, pady=(6, 3))
 
     def close_format(self):
         self.expanded_format = None
@@ -916,11 +996,6 @@ class App(ttk.Frame):
             event.widget, self.rows.get(item), self.file_menu, event, item=item, results=True
         )
 
-    def sort_mosaic(self, _event):
-        column = self.sort_choice.get()
-        if column != self.sort[0]:
-            self.sort_by(column)
-
     def layout_detail(self, _event=None):
         width = self.result_panes.winfo_width()
         if (self.detail_layout_pending and width >= 200
@@ -953,7 +1028,7 @@ class App(ttk.Frame):
                 self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
-        if self.view_mode.get() == "detail":
+        if self.details_open():
             books = self.library.get() == "books" and row is not None and row["extension"] in BOOK_EXTENSIONS
             if work:
                 tags = self.catalogue.work_classification(row["work_id"])
@@ -974,7 +1049,7 @@ class App(ttk.Frame):
             self.mosaic.select_item(
                 self.mosaic_item(self.active_result()), {self.mosaic_item(item) for item in self.table.selection()}
             )
-        self.update_buttons()
+        self.update_controls()
 
     @property
     def busy(self):
@@ -988,7 +1063,7 @@ class App(ttk.Frame):
             self.filter_library(), self.scope_label.cget("text"),
             shelf=self.personal_shelf(), locations=self.change_locations()
         )
-        self.update_buttons()
+        self.update_controls()
         if self.duplicate_window.winfo_viewable():
             self.duplicate_window.grab_set()
         else:
@@ -1001,29 +1076,22 @@ class App(ttk.Frame):
 
     def duplicates_closed(self):
         self.duplicate_window = None
-        self.update_buttons()
+        self.update_controls()
 
-    def update_buttons(self):
+    def update_controls(self):
         active = not self.busy
-        self.catalogue_button.configure(state="normal" if active else "disabled")
-        self.duplicate_button.configure(state="normal" if active else "disabled")
-        self.extension_button.configure(
-            state="disabled" if self.archive_running or self.duplicate_window is not None else "normal"
-        )
-        collection = self.collection_id()
+        state = "normal" if active else "disabled"
+        for menu in (self.catalogue_menu, self.search_menu, self.display_menu):
+            for index in range(menu.index("end") + 1):
+                menu.entryconfigure(index, state=state)
+        if self.selected_extensions is None:
+            self.search_menu.entryconfigure("Réinitialiser le filtre", state="disabled")
+        if self.view_mode.get() == "mosaic":
+            self.display_menu.entryconfigure("Volet de détails", state="disabled")
+        if self.library.get() != "books":
+            self.display_menu.entryconfigure("Regrouper par ouvrage", state="disabled")
         for button in self.library_buttons.values():
-            button.configure(state="normal" if active else "disabled")
-        self.new_button.configure(state="normal" if active else "disabled")
-        self.manage_button.configure(state="normal" if active and collection else "disabled")
-        self.manage_menu.entryconfigure(
-            self.remove_root_item, state="normal" if active and self.selected_root() else "disabled"
-        )
-        self.add_button.configure(state="normal" if active and collection else "disabled")
-        self.sync_button.configure(state="normal" if active and self.has_roots(collection) else "disabled")
-        row = self.selected_file()
-        self.relocate_button.configure(
-            state="normal" if active and (self.scope or (row and not self.is_work(row))) else "disabled"
-        )
+            button.configure(state=state)
 
     def new_collection(self):
         self.edit_collection_name()
@@ -1172,26 +1240,29 @@ class App(ttk.Frame):
     def post_row_menu(self, widget, row, previous, event, *, item=None, results=False, member=False):
         work = self.is_work(row)
         books = self.library.get() == "books"
-        if row is None and (not results or not books or self.busy):
+        if row is None:
             return previous
         if previous is not None:
             previous.destroy()
         menu = tk.Menu(widget, tearoff=False)
-        if row is not None and not work:
+        actionable = not self.busy and (results or member)
+        targets = self.menu_targets(item, row) if actionable else ()
+        book_action = actionable and books and (work or row["extension"] in BOOK_EXTENSIONS)
+        if book_action:
+            candidates = [target for target in targets
+                          if self.is_work(target) or target["extension"] in BOOK_EXTENSIONS]
+            if len(candidates) > 1:
+                menu.add_command(label=f"Regrouper la sélection… ({len(candidates)})",
+                                 command=lambda: self.combine_work(row, candidates))
+                menu.add_separator()
+        if not work:
             menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
             menu.add_command(label="Afficher dans l’Explorateur",
                              command=lambda: self.show_in_explorer(row, widget.winfo_toplevel()))
-        if not self.busy and (results or member):
-            targets = self.menu_targets(item, row)
-            if row is not None and not work:
-                self.add_classification_menu(menu, targets)
-            if books:
-                if work or (row is not None and row["extension"] in BOOK_EXTENSIONS):
-                    self.add_work_menu(menu, row, targets)
-                if row is not None:
-                    menu.add_separator()
-                menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
-                                     command=self.toggle_grouping)
+        if actionable and not work:
+            self.add_classification_menu(menu, targets)
+        if book_action:
+            self.add_work_menu(menu, row)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1236,7 +1307,7 @@ class App(ttk.Frame):
             return
         self.refresh_results()
 
-    def add_work_menu(self, menu, row, targets):
+    def add_work_menu(self, menu, row):
         work = self.is_work(row)
         if work:
             menu.add_command(label="Gérer les tags de l’ouvrage…", command=lambda: self.edit_work_tags(row))
@@ -1251,10 +1322,6 @@ class App(ttk.Frame):
                 menu.add_command(label="Retirer ce fichier de l’ouvrage", command=lambda: self.write_classification(
                     lambda: self.catalogue.remove_work_member(work_id, self.location(row))
                 ))
-        candidates = [target for target in targets if self.is_work(target) or target["extension"] in BOOK_EXTENSIONS]
-        if len(candidates) > 1:
-            menu.add_command(label=f"Regrouper la sélection… ({len(candidates)})",
-                             command=lambda: self.combine_work(row, candidates))
 
     def edit_work_tags(self, row):
         work_id = row["work_id"]
@@ -1343,7 +1410,7 @@ class App(ttk.Frame):
         self.error_button.state(["disabled"])
         self.scan_window = ScanWindow(self.window)
         self.status.set("Synchronisation en cours…")
-        self.update_buttons()
+        self.update_controls()
         library = self.library.get()
 
         def worker():
@@ -1448,7 +1515,7 @@ class App(ttk.Frame):
     def run_catalogue_task(self, caption, work, success):
         self.archive_running = True
         self.status.set(caption)
-        self.update_buttons()
+        self.update_controls()
         progress = tk.Toplevel(self.window)
         progress.title("Catalogue")
         progress.transient(self.window)
@@ -1480,7 +1547,7 @@ class App(ttk.Frame):
             bar.stop()
             progress.destroy()
             self.archive_running = False
-            self.update_buttons()
+            self.update_controls()
             if ok:
                 success(result)
             else:
@@ -1499,7 +1566,9 @@ class App(ttk.Frame):
         self.update_headings()
         self.load_column_widths()
         self.library.set(UNCLASSIFIED if self.catalogue.collections(UNCLASSIFIED) else "books")
-        self.view_mode.set(self.catalogue.results_view())
+        mode, details = self.catalogue.view_preferences()
+        self.view_mode.set(mode)
+        self.details_visible.set(details)
         self.grouped_books.set(self.catalogue.groups_enabled())
         self.query.set("")
         self.table.selection_remove(*self.table.selection())

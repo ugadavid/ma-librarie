@@ -233,11 +233,16 @@ class WorkTests(unittest.TestCase):
         app.query.set("")
         app.refresh_results()
         app.table.selection_set(node(self.extra), node(self.homonym))
-        table_click(app.table, node(self.extra))
+        app.table.focus(node(self.extra))
+        app.table.focus_force()
+        window.update()
+        with patch.object(tk.Menu, "tk_popup") as popup:
+            app.table.event_generate("<Shift-F10>")
+        popup.assert_called_once()
+        self.assertTrue(app.file_menu.entrycget(0, "label").startswith("Regrouper la sélection"))
         invoke("Regrouper la sélection")
         self.assertEqual(2, len(self.db.works()))
-        table_click(app.table, node(self.epub))
-        invoke("Regrouper par ouvrage")
+        app.display_menu.invoke("Regrouper par ouvrage")
         self.assertTrue(app.grouped_books.get())
 
         app.query.set("Philip K. Dick")
@@ -253,13 +258,11 @@ class WorkTests(unittest.TestCase):
         table_click(app.table, archive)
         invoke("Copier le chemin")
         self.assertEqual(str(self.second_pdf), window.clipboard_get())
-        app.view_mode.set("detail")
-        app.change_results_view()
+        app.display_menu.invoke("Volet de détails")
         window.update()
         self.assertEqual(4, len(app.detail_files.rows))
 
-        app.view_mode.set("mosaic")
-        app.change_results_view()
+        app.display_menu.invoke("Mosaïque")
         window.update()
         canvas = app.mosaic.canvas
         self.assertEqual(1, len(app.mosaic.tiles))
@@ -351,9 +354,7 @@ class WorkTests(unittest.TestCase):
                 invoke("Fusionner avec un ouvrage")
             self.assertIn("Fiche finale « Ubik »", confirm.call_args.args[1])
             self.assertEqual(1 if answer else 2, len(self.db.works()))
-        with patch.object(tk.Menu, "tk_popup"):
-            app.scope_label.event_generate("<Button-3>", x=8, y=5)
-        invoke("Regrouper par ouvrage")
+        app.display_menu.invoke("Regrouper par ouvrage")
         self.assertFalse(app.grouped_books.get())
         self.assertFalse(any(App.is_work(row) for row in app.rows.values()))
 

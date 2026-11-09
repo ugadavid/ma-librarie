@@ -134,7 +134,7 @@ class SynchronizationChangeTests(unittest.TestCase):
             return app.change_badge(row)
 
         def scan():
-            app.sync_button.invoke()
+            app.synchronize()
             self.assertTrue(app.scanning)
             settle("scanning")
             self.assertIn("Synchronisation terminée", app.status.get())
@@ -185,11 +185,9 @@ class SynchronizationChangeTests(unittest.TestCase):
         item, = app.rows
         self.assertIn("Modifié", app.table.item(item, "values")[-1])
         app.select_tile(item)
-        app.view_mode.set("detail")
-        app.change_results_view()
+        app.display_menu.invoke("Volet de détails")
         self.assertIn("Modifié", app.detail_pane.metadata.cget("text"))
-        app.view_mode.set("mosaic")
-        app.change_results_view()
+        app.display_menu.invoke("Mosaïque")
         window.update()
         canvas = app.mosaic.canvas
         self.assertTrue(any("Modifié" in canvas.itemcget(part, "text")
@@ -200,7 +198,7 @@ class SynchronizationChangeTests(unittest.TestCase):
         # A first inventory of an overlapping source leaves the previous comparison intact.
         scope(f"collection-{self.books}")
         with patch("catalogue.ui.filedialog.askdirectory", return_value=str(nested)):
-            app.add_button.invoke()
+            app.add_root()
             settle("scanning")
         self.assertEqual("", badge_for("Référence.mobi"))
         scope("new")
@@ -212,7 +210,7 @@ class SynchronizationChangeTests(unittest.TestCase):
         self.assertEqual(("all",), app.tree.selection())
         scope(f"collection-{movies}")
         with patch("catalogue.ui.filedialog.askdirectory", return_value=str(self.source)):
-            app.add_button.invoke()
+            app.add_root()
             settle("scanning")
         self.assertEqual("", badge_for("Ajout A.epub"))
         scope("new")
@@ -243,11 +241,11 @@ class SynchronizationChangeTests(unittest.TestCase):
 
         archive = self.base / "Archive témoin.sqlite3"
         backups.save_backup(self.db, archive)
-        catalogue_menu = window.nametowidget(app.catalogue_button.cget("menu"))
+        catalogue_menu = app.catalogue_menu
         with patch("catalogue.ui.filedialog.askopenfilename", return_value=str(archive)), \
                 patch("catalogue.ui.messagebox.askyesno", return_value=True), \
                 patch("catalogue.ui.messagebox.showerror") as error:
-            catalogue_menu.invoke(1)
+            catalogue_menu.invoke("Restaurer une sauvegarde…")
             settle("archive_running")
         error.assert_not_called()
         self.assertEqual(("all",), app.tree.selection())
