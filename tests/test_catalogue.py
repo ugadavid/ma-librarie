@@ -740,6 +740,60 @@ class CatalogueTests(unittest.TestCase):
             menu_for(f"root-{other_root}").invoke(0)
             scan.assert_called_once_with(other, root_id=other_root)
 
+    def test_file_menu_targets_pointer_in_all_scopes(self):
+        other = self.nested / "Autre témoin.epub"
+        other.write_bytes(self.book.read_bytes())
+        self.db.move_collection(self.collection, "books")
+        self.db.synchronize(self.collection)
+        self.db.set_extension_filter(self.collection, {"epub"})
+        self.db.set_extension_filter(None, {"epub"}, library="books")
+
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.geometry("1150x550")
+        app = App(window, self.db)
+        window.update()
+        root = f"root-{self.root_id}"
+        app.load_children(root)
+        branch, = app.tree.get_children(root)
+
+        for scope in ("all", f"collection-{self.collection}", root, branch):
+            with self.subTest(scope=scope):
+                app.tree.see(scope)
+                app.tree.selection_set(scope)
+                window.update()
+                ids = {row["name"]: node for node, row in app.rows.items()}
+                initial = ids[other.name]
+                target = ids[self.book.name]
+                app.table.selection_set(initial)
+                window.update()
+                previous = app.scope, app.sort, app.page, app.selected_extensions
+                x, y, _, height = app.table.bbox(target, "name")
+                with patch.object(tk.Menu, "tk_popup") as popup:
+                    app.table.event_generate("<Button-3>", x=x + 12, y=y + height // 2)
+                popup.assert_called_once()
+                app.file_menu.invoke(0)
+                self.assertEqual(str(self.book), window.clipboard_get())
+                self.assertEqual((initial,), app.table.selection())
+                self.assertEqual(str(other), app.full_path.get())
+                self.assertEqual(previous, (app.scope, app.sort, app.page, app.selected_extensions))
+                with patch("catalogue.ui.select_in_explorer") as explorer:
+                    app.file_menu.invoke(1)
+                explorer.assert_called_once_with(self.book)
+
+        heading = next(y for y in range(35) if app.table.identify_region(20, y) == "heading")
+        with patch.object(tk.Menu, "tk_popup") as popup:
+            app.table.event_generate("<Button-3>", x=20, y=heading)
+            app.table.event_generate("<Button-3>", x=20, y=app.table.winfo_height() - 10)
+        popup.assert_not_called()
+
+        self.book.unlink()
+        with patch("catalogue.ui.messagebox.showerror") as error, \
+                patch("catalogue.ui.select_in_explorer") as explorer:
+            app.file_menu.invoke(1)
+        self.assertIn("a disparu", error.call_args.args[1])
+        explorer.assert_not_called()
+
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()
         self.addCleanup(window.destroy)
@@ -767,7 +821,7 @@ class CatalogueTests(unittest.TestCase):
         app.table.selection_set(selected)
         app.update_details()
         self.assertIn("Hors ligne", app.details.get())
-        app.copy_button.invoke()
+        app.copy_path(app.rows[selected])
         self.assertEqual(str(self.book), window.clipboard_get())
 
 

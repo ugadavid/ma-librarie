@@ -157,6 +157,7 @@ class App(ttk.Frame):
         self.collection_items = {}
         self.active_collection = None
         self.context_menu = None
+        self.file_menu = None
         initial = UNCLASSIFIED if catalogue.collections(UNCLASSIFIED) else "books"
         self.library = tk.StringVar(window, value=initial)
         self.roots = {}
@@ -247,6 +248,7 @@ class App(ttk.Frame):
         self.table.bind("<ButtonRelease-1>", self.end_column_resize)
         self.update_headings()
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
+        self.table.bind("<Button-3>", self.show_file_menu)
         navigation = ttk.Frame(results)
         navigation.pack(fill="x")
         self.previous = ttk.Button(navigation, text="Précédent", command=lambda: self.move_page(-1))
@@ -262,12 +264,6 @@ class App(ttk.Frame):
         ttk.Label(details, textvariable=self.details, wraplength=980).pack(anchor="w")
         self.full_path = tk.StringVar()
         ttk.Entry(details, textvariable=self.full_path, state="readonly").pack(fill="x", pady=4)
-        self.copy_button = ttk.Button(details, text="Copier le chemin", command=self.copy_path)
-        self.explorer_button = ttk.Button(
-            details, text="Afficher dans l’Explorateur", command=self.show_in_explorer
-        )
-        self.copy_button.pack(side="left")
-        self.explorer_button.pack(side="left", padx=5)
 
         bottom = ttk.Frame(self)
         bottom.pack(fill="x")
@@ -554,8 +550,6 @@ class App(ttk.Frame):
             self.details.set(f"{label}  |  {meta}" if meta else label)
         else:
             self.details.set("Sélectionnez un résultat pour afficher son chemin.")
-        for button in (self.copy_button, self.explorer_button):
-            button.configure(state="normal" if row else "disabled")
         self.update_buttons()
 
     def update_buttons(self):
@@ -696,13 +690,29 @@ class App(ttk.Frame):
             except (OSError, ValueError) as exc:
                 messagebox.showerror("Relocalisation", str(exc), parent=self)
 
-    def copy_path(self):
+    def show_file_menu(self, event):
+        if self.table.identify_region(event.x, event.y) != "cell":
+            return
+        row = self.rows.get(self.table.identify_row(event.y))
+        if row is None:
+            return
+        if self.file_menu is not None:
+            self.file_menu.destroy()
+        menu = self.file_menu = tk.Menu(self.table, tearoff=False)
+        menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
+        menu.add_command(label="Afficher dans l’Explorateur",
+                         command=lambda: self.show_in_explorer(row))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def copy_path(self, row):
         self.clipboard_clear()
-        self.clipboard_append(self.full_path.get())
+        self.clipboard_append(row["full_path"])
         self.status.set("Chemin copié.")
 
-    def show_in_explorer(self):
-        row = self.selected_file()
+    def show_in_explorer(self, row):
         try:
             target = explorer_target(
                 row["root_path"], row["volume"], row["root_relative"], row["relative"]

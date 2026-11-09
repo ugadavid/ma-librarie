@@ -23,7 +23,7 @@ Les collections issues d’un ancien catalogue sont accessibles dans **À classe
 1. Créez une collection, puis ajoutez vos dossiers avec **Ajouter un dossier…**. Chaque dossier est inventorié dès son ajout.
 2. Utilisez **Synchroniser** pour mettre à jour toutes les racines de la collection sélectionnée ou réessayer après une erreur. La fenêtre de progression indique le dossier en cours, son rang et le nombre de fichiers examinés. Le bilan final distingue les ajouts, les changements, les absences confirmées et les erreurs.
 3. Recherchez un fichier par nom, chemin, titre ou auteur. Le filtre par extension et le tri par en-tête s’appliquent aux résultats. Sélectionnez la collection dans l’arbre pour rechercher sur toutes ses racines.
-4. Sélectionnez un résultat pour voir son chemin complet et l’état observé à la dernière synchronisation. Vous pouvez copier ce chemin hors ligne. **Afficher dans l’Explorateur** vérifie l’accès au fichier avant de le sélectionner.
+4. Sélectionnez un résultat pour voir son chemin complet et l’état observé à la dernière synchronisation. Faites un clic droit sur un fichier pour choisir **Copier le chemin**, même hors ligne, ou **Afficher dans l’Explorateur**. Les commandes ciblent la ligne sous le pointeur. L’Explorateur sélectionne le fichier après vérification de son accès.
 5. Si le dossier d’origine apparaît sous une autre lettre, sélectionnez sa racine puis cliquez sur **Relocaliser…**. Choisissez le dossier d’origine sur le même volume et relancez **Synchroniser**.
 
 La première détection correspond à la date de catalogage. Le scan lit les sources et ignore les points de réanalyse, dont les jonctions, les liens symboliques et certains fichiers à la demande. Les métadonnées intégrées sont lues pour les EPUB. Les sources sont des dossiers sur des volumes locaux identifiables par Windows.
@@ -50,4 +50,4 @@ Exécutez la suite dans une session Windows de bureau avec Tkinter.
 py -3 -m unittest discover -s tests -v
 ```
 
-[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md)
+[Rapport de recette ML-001](reports/ML-001_catalogue_windows.md) · [Rapport de recette ML-002](reports/ML-002_filtre_extensions.md) · [Rapport de recette ML-003](reports/ML-003_gestion_collections_tri.md) · [Rapport de recette ML-004](reports/ML-004_colonnes_progression.md) · [Rapport de recette ML-005](reports/ML-005_bibliotheques_recherche.md) · [Rapport de recette ML-006](reports/ML-006_menu_contextuel_fichiers.md)
