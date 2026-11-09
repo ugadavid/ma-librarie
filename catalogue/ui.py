@@ -110,6 +110,44 @@ class ExtensionDialog(tk.Toplevel):
             self.destroy()
 
 
+class ScanWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.withdraw()
+        self.title("Synchronisation du catalogue")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        panel = ttk.Frame(self, padding=14)
+        panel.pack(fill="both", expand=True)
+        self.position = ttk.Label(panel, text="Préparation de l’inventaire…")
+        self.position.pack(anchor="w")
+        self.source = ttk.Label(panel, wraplength=420)
+        self.source.pack(anchor="w", pady=(4, 8))
+        self.count = ttk.Label(panel, text="0 fichier examiné")
+        self.count.pack(anchor="w")
+        self.bar = ttk.Progressbar(panel, mode="indeterminate", length=420)
+        self.bar.pack(fill="x", pady=(8, 0))
+        self.bar.start()
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_reqwidth()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_reqheight()) // 2
+        self.geometry(f"{x:+d}{y:+d}")
+        self.deiconify()
+
+    def destroy(self):
+        self.bar.stop()
+        super().destroy()
+
+    def show_progress(self, progress):
+        self.position.configure(text=f"Source {progress.position} sur {progress.total}")
+        self.source.configure(text=progress.path)
+        count = f"{progress.examined:,}".replace(",", "\u202f")
+        label = "fichier examiné" if progress.examined <= 1 else "fichiers examinés"
+        self.count.configure(text=f"{count} {label}")
+
+
 class App(ttk.Frame):
     def __init__(self, window, catalogue):
         super().__init__(window, padding=12)
@@ -121,6 +159,9 @@ class App(ttk.Frame):
         self.rows = {}
         self.events = queue.SimpleQueue()
         self.scanning = False
+        self.scan_window = None
+        self.resize_start = None
+        self.pending_widths = {}
         self.errors = []
         self.sort = "Nom", False
         self.page = 0
@@ -184,8 +225,14 @@ class App(ttk.Frame):
         self.table = self.scroll_tree(results, columns=columns, show="headings")
         labels = ("Nom", "Extension", "Taille", "Modification", "Première détection", "État")
         self.headings = dict(zip(columns, labels))
-        for column, width in zip(columns, (170, 86, 86, 130, 145, 105)):
-            self.table.column(column, width=width, minwidth=52, stretch=column == "name")
+        saved_widths = self.catalogue.column_widths()
+        for column, width, minimum in zip(
+            columns, (235, 85, 85, 125, 145, 105), (95, 64, 65, 92, 105, 80)
+        ):
+            self.table.column(column, width=max(minimum, saved_widths.get(column, width)),
+                              minwidth=minimum, stretch=False)
+        self.table.bind("<ButtonPress-1>", self.begin_column_resize)
+        self.table.bind("<ButtonRelease-1>", self.end_column_resize)
         self.update_headings()
         self.table.bind("<<TreeviewSelect>>", lambda event: self.update_details())
         navigation = ttk.Frame(results)
@@ -217,7 +264,6 @@ class App(ttk.Frame):
         self.error_button = ttk.Button(bottom, text="Voir les erreurs", command=self.show_errors)
         self.error_button.pack(side="right")
         self.error_button.state(["disabled"])
-        self.progress = ttk.Progressbar(bottom, mode="indeterminate", length=95)
 
     @staticmethod
     def scroll_tree(parent, **options):
@@ -343,6 +389,36 @@ class App(ttk.Frame):
         if self.pending_search is not None:
             self.after_cancel(self.pending_search)
         self.pending_search = self.after(180, self.refresh_results)
+
+    def result_widths(self):
+        return {column: self.table.column(column, "width") for column in self.headings}
+
+    def begin_column_resize(self, event):
+        if self.table.identify_region(event.x, event.y) == "separator":
+            self.resize_start = self.result_widths()
+
+    def end_column_resize(self, _event):
+        before = self.resize_start
+        if before is not None:
+            self.resize_start = None
+            self.after_idle(self.save_column_resize, before)
+
+    def save_column_resize(self, before):
+        changed = {column: width for column, width in self.result_widths().items()
+                   if width != before[column]}
+        self.pending_widths.update(changed)
+        if not self.scanning:
+            self.flush_column_widths()
+
+    def flush_column_widths(self):
+        if not self.pending_widths:
+            return
+        try:
+            self.catalogue.save_column_widths(self.pending_widths)
+        except sqlite3.Error as exc:
+            messagebox.showerror("Largeur des colonnes", str(exc), parent=self)
+        else:
+            self.pending_widths.clear()
 
     def sort_by(self, column):
         current, descending = self.sort
@@ -501,15 +577,17 @@ class App(ttk.Frame):
             messagebox.showerror(title, str(exc), parent=self)
 
     def add_root(self):
+        collection = self.collection_id()
+        if self.scanning or collection is None:
+            return
         folder = filedialog.askdirectory(parent=self, title="Ajouter un dossier source", mustexist=True)
         if folder:
             try:
-                self.catalogue.add_root(self.collection_id(), folder)
-                self.load_roots(keep_scope=True)
-                self.status.set("Source ajoutée. Lancez Synchroniser pour l’inventorier.")
+                root_id = self.catalogue.add_root(collection, folder)
+                self.start_scan(collection, root_id=root_id)
             except sqlite3.IntegrityError:
                 messagebox.showerror("Source", "Ce dossier est déjà dans la collection.", parent=self)
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, sqlite3.Error) as exc:
                 messagebox.showerror("Source", str(exc), parent=self)
 
     def relocate(self):
@@ -544,22 +622,28 @@ class App(ttk.Frame):
 
     def synchronize(self):
         collection = self.collection_id()
+        if collection is not None and self.roots:
+            self.start_scan(collection)
+
+    def start_scan(self, collection, *, root_id=None):
+        if self.scanning:
+            return
         self.scanning = True
         self.errors = []
         self.error_button.state(["disabled"])
-        self.progress.pack(side="right", padx=5)
-        self.progress.start()
+        self.scan_window = ScanWindow(self.window)
         self.status.set("Synchronisation en cours…")
         self.update_buttons()
 
         def worker():
             try:
                 summary = self.catalogue.synchronize(
-                    collection, lambda source: self.events.put(("source", source))
+                    collection, root_id=root_id,
+                    on_progress=lambda update: self.events.put(("progress", update))
                 )
                 self.events.put(("done", summary))
-            except (OSError, sqlite3.Error) as exc:
-                self.events.put(("failed", str(exc)))
+            except Exception as exc:
+                self.events.put(("failed", str(exc) or type(exc).__name__))
 
         threading.Thread(target=worker, daemon=True).start()
         self.after(75, self.poll_scan)
@@ -567,8 +651,8 @@ class App(ttk.Frame):
     def poll_scan(self):
         while not self.events.empty():
             event, data = self.events.get_nowait()
-            if event == "source":
-                self.status.set(f"Synchronisation de {data}…")
+            if event == "progress":
+                self.scan_window.show_progress(data)
                 continue
             if event == "done":
                 self.errors = data.errors
@@ -581,8 +665,9 @@ class App(ttk.Frame):
                 self.errors = [data]
                 self.status.set("Synchronisation interrompue.")
             self.scanning = False
-            self.progress.stop()
-            self.progress.pack_forget()
+            self.scan_window.destroy()
+            self.scan_window = None
+            self.flush_column_widths()
             self.error_button.state(["!disabled"] if self.errors else ["disabled"])
             self.load_roots(keep_scope=True)
         if self.scanning:
@@ -602,6 +687,7 @@ class App(ttk.Frame):
     def close(self):
         if not self.scanning or messagebox.askyesno(
                 "Synchronisation en cours", "Fermer pendant la synchronisation ?", parent=self):
+            self.flush_column_widths()
             self.window.destroy()
 
 

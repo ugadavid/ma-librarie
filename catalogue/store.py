@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS entries (
     state TEXT NOT NULL,
     PRIMARY KEY (root_id, relative, kind)
 );
+CREATE TABLE IF NOT EXISTS column_widths (
+    column_name TEXT PRIMARY KEY, width INTEGER NOT NULL CHECK (width > 0)
+);
 CREATE TABLE IF NOT EXISTS catalogue_ids (
     kind TEXT PRIMARY KEY, last_id INTEGER NOT NULL
 );
@@ -133,9 +136,11 @@ def epub_metadata(path):
         )
 
 
-def inventory(source, previous):
+def inventory(source, previous, on_examined=None):
     result = Scan()
     pending = [""]
+    examined = 0
+    last_report = 0
     while pending:
         relative = pending.pop()
         folder = source.scan_path / relative
@@ -177,9 +182,25 @@ def inventory(source, previous):
                         result.entries[key] = Entry(
                             child.name, "file", extension, info.st_size, info.st_mtime_ns, *metadata
                         )
+                        examined += 1
+                        if on_examined is not None:
+                            now = time.monotonic()
+                            if now - last_report >= 0.15:
+                                on_examined(examined)
+                                last_report = now
         except OSError as exc:
             result.fail(relative, exc)
+    if on_examined is not None:
+        on_examined(examined)
     return result
+
+
+@dataclass(frozen=True)
+class ScanProgress:
+    path: str
+    position: int
+    total: int
+    examined: int = 0
 
 
 class Catalogue:
@@ -236,6 +257,18 @@ class Catalogue:
             "UPDATE catalogue_ids SET last_id = last_id + 1 WHERE kind = ? RETURNING last_id",
             (kind,),
         ).fetchone()[0]
+
+    def column_widths(self):
+        with self.connect() as db:
+            return dict(db.execute("SELECT column_name, width FROM column_widths"))
+
+    def save_column_widths(self, widths):
+        with self.connect() as db:
+            db.executemany(
+                """INSERT INTO column_widths (column_name, width) VALUES (?, ?)
+                   ON CONFLICT (column_name) DO UPDATE SET width = excluded.width""",
+                widths.items(),
+            )
 
     def collections(self):
         with self.connect() as db:
@@ -439,22 +472,35 @@ class Catalogue:
                 (os.sep, os.sep, *args, limit, offset),
             ).fetchall()
 
-    def synchronize(self, collection, progress=lambda message: None):
+    def synchronize(self, collection, progress=None, *, root_id=None, on_progress=None):
         with self.mutation():
-            return self.scan_collection(collection, progress)
+            roots = self.roots(collection)
+            if root_id is not None:
+                roots = [root for root in roots if root["id"] == root_id]
+                if not roots:
+                    raise ValueError("Cette racine n’existe plus dans la collection.")
+            return self.scan_collection(collection, roots, progress, on_progress)
 
-    def scan_collection(self, collection, progress):
+    def scan_collection(self, collection, roots, progress, on_progress):
         summary = Summary()
         now = time.time_ns()
-        for root in self.roots(collection):
-            progress(root["path"])
+        total = len(roots)
+        for position, root in enumerate(roots, 1):
+            root_path = root["path"]
+            if progress is not None:
+                progress(root_path)
+            if on_progress is not None:
+                on_progress(ScanProgress(root_path, position, total))
             with self.connect() as db:
                 previous = {(row["relative"], row["kind"]): row for row in db.execute(
                     "SELECT * FROM entries WHERE root_id = ?", (root["id"],)
                 )}
             try:
                 source = verify(root["path"], root["volume"], root["relative"])
-                scan = inventory(source, previous)
+                def report_files(count):
+                    on_progress(ScanProgress(root_path, position, total, count))
+
+                scan = inventory(source, previous, report_files if on_progress is not None else None)
                 verify(root["path"], root["volume"], root["relative"])
                 state = "error" if "" in scan.blocked else "partial" if scan.errors else "available"
                 errors = scan.errors

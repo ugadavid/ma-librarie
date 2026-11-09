@@ -532,6 +532,115 @@ class CatalogueTests(unittest.TestCase):
         rows = self.db.search(self.collection, sort="Extension", descending=False)
         self.assertEqual("", rows[0]["extension"])
 
+    def test_targeted_inventory_leaves_existing_root_untouched(self):
+        self.db.synchronize(self.collection)
+        existing, = self.db.search(self.collection, "Ubik")
+        revisions = {root["id"]: root["revision"] for root in self.db.roots(self.collection)}
+        (self.books / "Hors de la nouvelle racine.pdf").touch()
+        (self.nested / "Nouveau.mobi").touch()
+        nested = self.db.add_root(self.collection, self.nested)
+        updates = []
+        summary = self.db.synchronize(self.collection, root_id=nested, on_progress=updates.append)
+        self.assertEqual(1, len(summary.added))
+        self.assertEqual({(str(self.nested), 1, 1)}, {
+            (item.path, item.position, item.total) for item in updates
+        })
+        self.assertEqual(0, updates[0].examined)
+        self.assertEqual(2, updates[-1].examined)
+        self.assertEqual(revisions, {root["id"]: root["revision"]
+                                    for root in self.db.roots(self.collection) if root["id"] != nested})
+        self.assertFalse(self.db.search(self.collection, "Hors de la nouvelle racine"))
+        retained, = self.db.search(self.collection, "Ubik")
+        self.assertEqual(existing["detected"], retained["detected"])
+
+    def test_add_root_starts_scan_and_failed_source_can_retry(self):
+        collection = self.db.create_collection("Collection de recette")
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.withdraw()
+        app = App(window, self.db)
+        app.load_collections(collection)
+        self.assertFalse(app.scanning)
+        with patch("catalogue.ui.filedialog.askdirectory", return_value=""):
+            app.add_root()
+        self.assertFalse(app.scanning)
+        self.assertFalse(self.db.roots(collection))
+
+        def finish():
+            deadline = time.monotonic() + 10
+            while app.scanning and time.monotonic() < deadline:
+                window.update()
+                time.sleep(0.02)
+            self.assertFalse(app.scanning)
+            self.assertIsNone(app.scan_window)
+            self.assertFalse(app.sync_button.instate(["disabled"]))
+
+        scandir = os.scandir
+
+        def deny_source(folder):
+            if Path(folder).name == self.books.name:
+                raise PermissionError("Refus témoin")
+            return scandir(folder)
+
+        with patch("catalogue.ui.filedialog.askdirectory", return_value=str(self.books)), \
+                patch("catalogue.store.os.scandir", side_effect=deny_source):
+            app.add_root()
+            self.assertTrue(app.scanning)
+            self.assertTrue(app.add_button.instate(["disabled"]))
+            self.assertIsNotNone(app.scan_window)
+            finish()
+        self.assertEqual("error", self.db.roots(collection)[0]["state"])
+        self.assertIn("Refus témoin", app.errors[0])
+        self.assertFalse(app.error_button.instate(["disabled"]))
+
+        app.sync_button.invoke()
+        finish()
+        self.assertEqual("available", self.db.roots(collection)[0]["state"])
+        self.assertEqual({"Guide.pdf", "Ubik.epub"}, {row["name"] for row in app.rows.values()})
+        with patch("catalogue.ui.filedialog.askdirectory", return_value=str(self.books)), \
+                patch("catalogue.ui.messagebox.showerror") as error:
+            app.add_root()
+            error.assert_called_once()
+        self.assertFalse(app.scanning)
+
+    def test_column_drag_does_not_sort_and_persists_widths(self):
+        self.db.synchronize(self.collection)
+        window = tk.Tk()
+        self.addCleanup(window.destroy)
+        window.geometry("1200x550")
+        app = App(window, self.db)
+        window.update()
+        original = app.result_widths()
+        table = app.table
+
+        def drag_name(offset):
+            x = table.column("name", "width")
+            y = next(y for y in range(35) if table.identify_region(x, y) == "separator")
+            table.event_generate("<Motion>", x=x, y=y)
+            table.event_generate("<ButtonPress-1>", x=x, y=y)
+            table.event_generate("<B1-Motion>", x=x + offset, y=y)
+            table.event_generate("<ButtonRelease-1>", x=x + offset, y=y)
+            window.update()
+
+        app.scanning = True
+        drag_name(45)
+        self.assertEqual({}, self.db.column_widths())
+        app.scanning = False
+        app.flush_column_widths()
+        self.assertEqual(("Nom", False), app.sort)
+        custom = app.result_widths()
+        self.assertAlmostEqual(original["name"] + 45, custom["name"], delta=2)
+        self.assertEqual({"name": custom["name"]}, self.db.column_widths())
+        window.state("zoomed")
+        app.apply_extensions(self.collection, {"epub"})
+        window.update()
+        self.assertEqual(custom, app.result_widths())
+        app.destroy()
+
+        reopened = App(window, store.Catalogue(self.filename))
+        window.update()
+        self.assertEqual(custom, reopened.result_widths())
+
     def test_tk_window_sync_and_offline_clipboard(self):
         window = tk.Tk()
         self.addCleanup(window.destroy)
