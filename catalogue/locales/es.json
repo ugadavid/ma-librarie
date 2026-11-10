@@ -349,6 +349,7 @@
   "shortcut_help": "↑ y ↓ desplazan el texto y Re Pág y Av Pág cambian de página. Inicio y Fin van a los extremos. Tab lleva a los botones y Esc cierra la ventana.",
   "duplicate_progress": "{phase} · {done} de {total}",
   "duplicate_finished": "{status} el {time}.",
+  "product_version": "Versión {version}",
   "brand_site": "Sitio de {brand}",
   "brand_site_error": "No se pudo abrir el sitio de {brand} en el navegador."
 }

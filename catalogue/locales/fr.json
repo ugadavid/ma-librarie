@@ -349,6 +349,7 @@
   "shortcut_help": "↑ et ↓ font défiler le texte, Page précédente et Page suivante changent de page. Début et Fin vont aux extrémités. Tab rejoint les boutons et Échap ferme la fenêtre.",
   "duplicate_progress": "{phase} · {done} sur {total}",
   "duplicate_finished": "{status} le {time}.",
+  "product_version": "Version {version}",
   "brand_site": "Site {brand}",
   "brand_site_error": "Impossible d’ouvrir le site {brand} dans le navigateur."
 }

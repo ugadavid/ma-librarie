@@ -4,7 +4,7 @@ from tkinter import ttk
 
 from .localized import Button, Label, tr
 from .i18n import msg
-from . import APP_NAME, EDITORIAL_BRAND
+from . import APP_NAME, EDITORIAL_BRAND, __version__
 from .dialogs import Dialog, FIELD_COLORS, invoke, showerror
 from .night import ART, GOLD
 
@@ -104,6 +104,7 @@ class AboutDialog(HelpWindow):
     def body(self, parent):
         self.logo = tk.PhotoImage(master=self, file=str(ART / "trucabule.png")).subsample(3)
         Label(parent, image=self.logo).pack(pady=(0, 10))
+        Label(parent, text=msg("product_version", version=__version__)).pack(anchor="w", pady=(0, 4))
         Label(parent, text=msg("editorial_brand", brand=EDITORIAL_BRAND)).pack(anchor="w", pady=(0, 8))
         Label(parent, text=msg("projet_et_direction_editoriale_david"), justify="left").pack(anchor="w")
         link = Button(parent, text=msg("brand_site", brand=EDITORIAL_BRAND), command=self.open_brand_site)

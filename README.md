@@ -2,7 +2,25 @@
 
 Catalogue local de livres, films et autres fichiers pour Windows 11. Une collection regroupe plusieurs dossiers sources et reste consultable quand ils sont débranchés.
 
-## Démarrer sous Windows
+## Installer sous Windows 11 x64
+
+Les versions distribuées sont disponibles dans les [releases GitHub](https://github.com/ugadavid/ma-librarie/releases). Téléchargez l’installateur ou le ZIP de la version choisie avec le fichier `SHA256SUMS.txt`. Dans PowerShell, calculez l’empreinte du fichier téléchargé avec `Get-FileHash -Algorithm SHA256 -LiteralPath <fichier>`, puis comparez-la à la ligne correspondante.
+
+L’installateur installe Ma Médiathèque pour l’utilisateur courant et ajoute un raccourci au menu Démarrer. Le raccourci Bureau est facultatif. Pour utiliser le ZIP, extrayez tout le dossier puis ouvrez **Ma-Mediatheque.exe**. Les deux livrables embarquent Python, Tk/Tcl, SQLite, Pillow et pypdf.
+
+Le ZIP, l’installation et les sources utilisent le même catalogue dans **%LOCALAPPDATA%\MaLibrarie**. L’installation se trouve dans **%LOCALAPPDATA%\Programs\Ma Mediatheque**. Une réinstallation ou une mise à jour retrouve le catalogue existant. La désinstallation standard retire les binaires et raccourcis et conserve le catalogue, les réglages et les sauvegardes.
+
+## Générer les livrables Windows
+
+Utilisez **CPython 3.13.5 x64** avec Tkinter/Tcl-Tk et **Inno Setup 7.1.1 x64**. Le script crée un environnement de build avec les dépendances épinglées et lit la version depuis `catalogue/__init__.py`.
+
+```powershell
+.\packaging\windows\build.ps1 -InnoCompiler 'C:\Program Files\Inno Setup 7\ISCC.exe'
+```
+
+Passez le chemin réel de `ISCC.exe`. Le paramètre facultatif `-PythonExe` sélectionne un interpréteur précis. Dans `dist/windows/<version>/`, le script produit le dossier exécutable **Ma-Mediatheque**, le ZIP, l’installateur et **SHA256SUMS.txt**. Les fichiers distribués gardent leur dossier `_internal` à côté de l’exécutable.
+
+## Démarrer depuis les sources sous Windows
 
 Installez Python 3.11 ou une version ultérieure avec Tkinter/Tcl-Tk et le lanceur Python pour Windows. Depuis la racine du dépôt, lancez la commande suivante dans PowerShell.
 

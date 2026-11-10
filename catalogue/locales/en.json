@@ -349,6 +349,7 @@
   "shortcut_help": "↑ and ↓ scroll the text, and Page Up and Page Down move by a page. Home and End go to the start and end. Tab moves to the buttons and Esc closes the window.",
   "duplicate_progress": "{phase} · {done} of {total}",
   "duplicate_finished": "{status} on {time}.",
+  "product_version": "Version {version}",
   "brand_site": "{brand} website",
   "brand_site_error": "Could not open the {brand} website in the browser."
 }

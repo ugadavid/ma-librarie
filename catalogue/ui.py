@@ -21,7 +21,7 @@ from .duplicate_view import DuplicateWindow
 from .help_view import AboutDialog, HelpDialog
 from .mosaic import Mosaic
 from .chrome import MenuBar, tint_title
-from .night import Art, Home, TEAL, TEXT_MAX, TEXT_MIN, use_theme
+from .night import ART, Art, Home, TEAL, TEXT_MAX, TEXT_MIN, use_theme
 from .night_menu import NightMenu
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
@@ -1822,6 +1822,7 @@ def main():
     window = tk.Tk()
     use_theme(window)
     window.title(APP_NAME)
+    window.iconbitmap(default=str(ART / "Ma-Mediatheque.ico"))
     window.geometry("1130x680")
     window.minsize(850, 480)
     session = None
