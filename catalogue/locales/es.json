@@ -154,7 +154,6 @@
   "menus_contextuels": "Menús contextuales",
   "fenetres_daide": "Ventanas de ayuda",
   "fermer": "Cerrar",
-  "impossible_douvrir_le_depot_dans_le_navigateur": "No se pudo abrir el repositorio en el navegador.",
   "doublons_exacts": "Duplicados exactos",
   "preparation_de_la_verification": "Preparando la comprobación…",
   "groupe_copie": "Grupo / copia",
@@ -340,7 +339,7 @@
   "help_tags": "Haz clic derecho en un resultado para gestionar sus etiquetas o añadirlo a favoritos. Favoritos y Mis estantes muestran los archivos clasificados de todas las colecciones de la biblioteca actual.",
   "help_backup": "En Catálogo, elige Crear copia del catálogo… para copiar el catálogo y sus clasificaciones. Restaurar una copia… recupera los datos y ajustes guardados sin volver a inventariar las carpetas de origen. Los archivos de origen permanecen en sus carpetas.",
   "shortcut_home": "Tab mueve el foco entre los controles. Pulsa Intro o Espacio para abrir la biblioteca que tiene el foco.",
-  "shortcut_bar": "F10 lleva el foco a la barra de menús. Usa ← o → para elegir un menú e Intro para abrirlo. Alt+C abre Catálogo, Alt+B Bibliotecas, Alt+S Búsqueda, Alt+V Vista, Alt+A Ayuda y Alt+I Idioma.",
+  "shortcut_bar": "Pulsa Alt sin combinarla para mostrar u ocultar las letras subrayadas. F10 lleva el foco a la barra de menús, empezando por Bibliotecas. Usa ← o → para elegir un menú e Intro para abrirlo. Esc oculta las indicaciones y devuelve el foco. Los atajos funcionan con las indicaciones ocultas. Alt+B abre Bibliotecas, Alt+C Catálogo, Alt+S Búsqueda, Alt+V Vista, Alt+I Idioma y Alt+A Ayuda.",
   "shortcut_menu": "Usa ↑ y ↓ para recorrer las opciones e Inicio y Fin para ir a la primera o a la última. Intro o Espacio activa la selección. → abre el submenú seleccionado y ← vuelve al menú superior. En un menú principal, ← y → cambian al menú vecino. Esc cierra el panel actual o sale de la barra.",
   "shortcut_context": "Mayús+F10 o la tecla Menú abre las opciones del elemento activo en el árbol, la Lista, el Mosaico o la tabla de formatos desplegada.",
   "shortcut_grid": "Las cuatro flechas mueven la selección entre mosaicos cuando la cuadrícula tiene el foco.",
@@ -349,5 +348,7 @@
   "shortcut_default": "Ctrl+0. En AZERTY, usa Ctrl+à sin Mayús en la tecla 0/à o Ctrl+0 en el teclado numérico.",
   "shortcut_help": "↑ y ↓ desplazan el texto y Re Pág y Av Pág cambian de página. Inicio y Fin van a los extremos. Tab lleva a los botones y Esc cierra la ventana.",
   "duplicate_progress": "{phase} · {done} de {total}",
-  "duplicate_finished": "{status} el {time}."
+  "duplicate_finished": "{status} el {time}.",
+  "brand_site": "Sitio de {brand}",
+  "brand_site_error": "No se pudo abrir el sitio de {brand} en el navegador."
 }

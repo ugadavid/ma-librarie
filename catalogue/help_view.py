@@ -6,10 +6,10 @@ from .localized import Button, Label, tr
 from .i18n import msg
 from . import APP_NAME, EDITORIAL_BRAND
 from .dialogs import Dialog, FIELD_COLORS, invoke, showerror
-from .night import GOLD
+from .night import ART, GOLD
 
 
-PROJECT_URL = "https://github.com/ugadavid/ma-librarie"
+BRAND_URL = "https://www.trucabule.fr/"
 SHORTCUTS_TITLE = msg("raccourcis_clavier")
 
 DOCUMENTATION = (
@@ -96,23 +96,25 @@ class HelpDialog(HelpWindow):
             text.insert("end", tr(text, title) + "\n", "section")
             text.insert("end", tr(text, description) + "\n", "paragraph")
 
+
 class AboutDialog(HelpWindow):
     def __init__(self, parent):
         super().__init__(parent, msg("about", name=APP_NAME))
 
     def body(self, parent):
-        if EDITORIAL_BRAND:
-            Label(parent, text=msg("editorial_brand", brand=EDITORIAL_BRAND)).pack(anchor="w", pady=(0, 8))
-        Label(parent, text=msg("projet_et_direction_editoriale_david"),
-                  justify="left").pack(anchor="w")
-        link = Button(parent, text="GitHub", command=self.open_project)
+        self.logo = tk.PhotoImage(master=self, file=str(ART / "trucabule.png")).subsample(3)
+        Label(parent, image=self.logo).pack(pady=(0, 10))
+        Label(parent, text=msg("editorial_brand", brand=EDITORIAL_BRAND)).pack(anchor="w", pady=(0, 8))
+        Label(parent, text=msg("projet_et_direction_editoriale_david"), justify="left").pack(anchor="w")
+        link = Button(parent, text=msg("brand_site", brand=EDITORIAL_BRAND), command=self.open_brand_site)
         link.pack(anchor="w", pady=(12, 4))
         link.bind("<Return>", lambda _event: invoke(link))
-        Label(parent, text=PROJECT_URL).pack(anchor="w")
+        Label(parent, text=BRAND_URL).pack(anchor="w")
         return link
 
-    def open_project(self):
+    def open_brand_site(self):
         try:
-            os.startfile(PROJECT_URL)
+            os.startfile(BRAND_URL)
         except OSError:
-            showerror("GitHub", msg("impossible_douvrir_le_depot_dans_le_navigateur"), parent=self)
+            showerror(msg("brand_site", brand=EDITORIAL_BRAND),
+                      msg("brand_site_error", brand=EDITORIAL_BRAND), parent=self)

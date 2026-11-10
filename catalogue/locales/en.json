@@ -154,7 +154,6 @@
   "menus_contextuels": "Context menus",
   "fenetres_daide": "Help windows",
   "fermer": "Close",
-  "impossible_douvrir_le_depot_dans_le_navigateur": "Could not open the repository in the browser.",
   "doublons_exacts": "Exact duplicates",
   "preparation_de_la_verification": "Preparing the check…",
   "groupe_copie": "Group / copy",
@@ -340,7 +339,7 @@
   "help_tags": "Right-click a result to manage its tags or add it to favourites. Favourites and My shelves show classified files from across the current library’s collections.",
   "help_backup": "In Catalogue, choose Back up catalogue… to copy the catalogue and its classifications. Restore a backup… restores the saved data and preferences without scanning the source folders again. Source files stay in their folders.",
   "shortcut_home": "Tab moves focus between controls. Press Enter or Space to open the focused library.",
-  "shortcut_bar": "F10 focuses the menu bar. Press ← or → to choose a menu, then Enter to open it. Alt+C opens Catalogue, Alt+L Libraries, Alt+S Search, Alt+V View, Alt+H Help and Alt+G Language.",
+  "shortcut_bar": "Press Alt alone to show or hide underlined letters. F10 focuses the menu bar, starting with Libraries. Press ← or → to choose a menu, then Enter to open it. Esc hides the cues and restores focus. Shortcuts work with the cues hidden. Alt+L opens Libraries, Alt+C Catalogue, Alt+S Search, Alt+V View, Alt+G Language and Alt+H Help.",
   "shortcut_menu": "Use ↑ and ↓ to move through entries, Home and End to go to the first or last. Enter or Space activates the selection. → opens a selected submenu and ← returns to its parent. On a top-level menu, ← and → switch to its neighbour. Esc closes the current panel or leaves the menu bar.",
   "shortcut_context": "Shift+F10 or the Menu key opens commands for the active item in the tree, List, Grid or expanded formats table.",
   "shortcut_grid": "The four arrow keys move the selection between tiles when the Grid has focus.",
@@ -349,5 +348,7 @@
   "shortcut_default": "Ctrl+0. On AZERTY, use Ctrl+à without Shift on the 0/à key, or Ctrl+0 on the numeric keypad.",
   "shortcut_help": "↑ and ↓ scroll the text, and Page Up and Page Down move by a page. Home and End go to the start and end. Tab moves to the buttons and Esc closes the window.",
   "duplicate_progress": "{phase} · {done} of {total}",
-  "duplicate_finished": "{status} on {time}."
+  "duplicate_finished": "{status} on {time}.",
+  "brand_site": "{brand} website",
+  "brand_site_error": "Could not open the {brand} website in the browser."
 }

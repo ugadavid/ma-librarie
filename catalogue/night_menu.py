@@ -49,12 +49,12 @@ class NightMenu(tk.Menu):
         if "label" in options:
             self.labels[self.index("end")] = options["label"]
 
-    def tk_popup(self, x, y, *, keyboard=False, on_close=None, switch=None, hover_switch=None):
+    def tk_popup(self, x, y, *, keyboard=False, on_close=None, switch=None, hover_switch=None, key_tag=None):
         owner = self.master.winfo_toplevel()
         current = getattr(owner, "_night_popup", None)
         if current:
             current.close()
-        self.popup = Popup(self, owner, x, y, keyboard, on_close, switch, hover_switch)
+        self.popup = Popup(self, owner, x, y, keyboard, on_close, switch, hover_switch, key_tag)
 
     def destroy(self):
         if self.popup is not None:
@@ -63,7 +63,7 @@ class NightMenu(tk.Menu):
 
 
 class Popup:
-    def __init__(self, model, owner, x, y, keyboard, on_close, switch, hover_switch):
+    def __init__(self, model, owner, x, y, keyboard, on_close, switch, hover_switch, key_tag):
         self.model = model
         self.owner = owner
         if not hasattr(owner, "_night_popup_host"):
@@ -71,6 +71,7 @@ class Popup:
         self.on_close = on_close
         self.switch = switch
         self.hover_switch = hover_switch
+        self.key_tag = key_tag
         self.pointer = owner.winfo_pointerxy()
         self.focus = owner.focus_get()
         self.grab = owner.grab_current()
@@ -208,6 +209,8 @@ class Level:
         self.window.protocol("WM_DELETE_WINDOW", popup.close)
         self.canvas = tk.Canvas(self.window, background=INK, borderwidth=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=1, pady=1)
+        if popup.key_tag:
+            self.canvas.bindtags((popup.key_tag, *self.canvas.bindtags()))
         self.window.bind("<ButtonPress>", popup.press)
         self.window.bind("<ButtonRelease-1>", popup.release)
         self.canvas.bind("<KeyPress>", self.key)
@@ -333,7 +336,6 @@ class Level:
             self.popup.close()
         elif self.parent is None and self.popup.switch and key in ("Left", "Right"):
             offset = -1 if key == "Left" else 1
-            self.popup.close()
             self.popup.switch(offset)
         elif event.char:
             for index in self.enabled:

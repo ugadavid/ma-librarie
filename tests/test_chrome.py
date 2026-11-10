@@ -3,6 +3,7 @@ import os
 import time
 import tkinter as tk
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from catalogue import chrome
@@ -60,6 +61,47 @@ class ChromeTests(unittest.TestCase):
             popup.assert_called_once()
             window.update()
             self.assertEqual(entry, window.focus_get())
+
+    def test_alt_alone_toggles_cues_and_chords_leave_them_hidden(self):
+        window = self.window()
+        entry = tk.Entry(window)
+        entry.pack()
+        menu = tk.Menu(window, tearoff=False)
+        bar = chrome.MenuBar(window, window, (("Bibliothèques", menu),))
+        bar.pack(fill="x")
+        window.update()
+        entry.focus_force()
+        window.update()
+        button = bar.buttons["Bibliothèques"]
+
+        def tap_alt(key, state=0):
+            event = SimpleNamespace(keysym=key, state=state)
+            bar.key_press(event)
+            bar.key_release(event)
+            window.update()
+
+        self.assertEqual(-1, button.cget("underline"))
+        tap_alt("Alt_L")
+        self.assertEqual(0, button.cget("underline"))
+        self.assertEqual(button, window.focus_get())
+        tap_alt("Alt_L")
+        self.assertEqual(-1, button.cget("underline"))
+        self.assertEqual(entry, window.focus_get())
+        tap_alt("Alt_R", state=chrome.CONTROL)
+        self.assertEqual(-1, button.cget("underline"))
+
+        entry.bind("<KeyPress-z>", lambda _event: "break")
+        alt = SimpleNamespace(keysym="Alt_L", state=0)
+        bar.key_press(alt)
+        entry.event_generate("<KeyPress-z>")
+        self.assertFalse(bar.alt_alone)
+        bar.key_release(alt)
+        self.assertEqual(-1, button.cget("underline"))
+        tap_alt("Alt_L")
+        button.event_generate("<Escape>")
+        window.update()
+        self.assertEqual(-1, button.cget("underline"))
+        self.assertEqual(entry, window.focus_get())
 
     def test_themed_submenu_is_invoked_and_focus_is_restored(self):
         window = self.window()

@@ -86,7 +86,7 @@ class NightTests(unittest.TestCase):
         reopened.display_menu.invoke("Taille du texte par défaut")
         self.assertEqual(0, db.text_offset())
 
-    def test_help_reuses_shortcuts_and_links_to_the_project(self):
+    def test_help_reuses_shortcuts_and_links_to_the_brand(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         window = self.window()
@@ -96,10 +96,15 @@ class NightTests(unittest.TestCase):
         window.update()
         views = []
 
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
         def capture():
             dialog = next(child for child in app.winfo_children() if isinstance(child, HelpDialog))
             try:
-                text = dialog.focus_get()
+                text = next(child for child in descendants(dialog) if isinstance(child, tk.Text))
                 views.append((text.cget("state"), text.get("1.0", "end-1c")))
             finally:
                 dialog.destroy()
@@ -114,13 +119,13 @@ class NightTests(unittest.TestCase):
 
         def follow_link():
             dialog = next(child for child in app.winfo_children() if isinstance(child, AboutDialog))
-            dialog.open_project()
+            dialog.open_brand_site()
             dialog.destroy()
 
         with patch("catalogue.help_view.os.startfile") as browser:
             window.after(30, follow_link)
             app.help_menu.invoke("À propos de Ma Médiathèque")
-        browser.assert_called_once_with("https://github.com/ugadavid/ma-librarie")
+        browser.assert_called_once_with("https://www.trucabule.fr/")
 
     def test_tag_counts_scroll_cancel_apply_and_focus(self):
         window = self.window()

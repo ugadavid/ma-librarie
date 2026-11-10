@@ -354,9 +354,9 @@ class App(ttk.Frame):
         self.help_menu = NightMenu(self, tearoff=False)
         self.language_menu = NightMenu(self, tearoff=False)
         self.menubar = MenuBar(self, self.window, (
-            (msg("catalogue"), self.catalogue_menu), (msg("bibliotheques"), self.library_menu),
-            (msg("recherche"), self.search_menu), (msg("affichage"), self.display_menu), (msg("aide"), self.help_menu),
-            (msg("langue"), self.language_menu),
+            (msg("bibliotheques"), self.library_menu), (msg("catalogue"), self.catalogue_menu),
+            (msg("recherche"), self.search_menu), (msg("affichage"), self.display_menu),
+            (msg("langue"), self.language_menu), (msg("aide"), self.help_menu),
         ), underlines={msg("aide"): 1})
         self.menubar.pack(fill="x", before=self.workspace, pady=(0, 7))
         self.help_menu.add_command(label=msg("documentation"), underline=0,

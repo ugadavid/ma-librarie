@@ -3,6 +3,7 @@ import sys
 import tkinter as tk
 from ctypes import wintypes
 from tkinter import ttk
+from weakref import WeakSet
 
 from .localized import locale, tr
 from .night import CARD, INK, LINE, SELECTED, TEAL, TEXT
@@ -12,6 +13,9 @@ DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
 DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
 GA_ROOT = 2
+ALT_KEYS = {"Alt_L", "Alt_R"}
+SHIFT_OR_CONTROL = 0x0005
+CONTROL = 0x0004
 
 MENU_MNEMONICS = {
     "en": dict(zip(("catalogue", "bibliotheques", "recherche", "affichage", "aide", "langue"), "clsvhg")),
@@ -61,6 +65,11 @@ class MenuBar(ttk.Frame):
         self.return_focus = None
         self.posting = False
         self.keyboard = False
+        self.cues_visible = False
+        self.alt_key = None
+        self.alt_alone = False
+        self.tracked = WeakSet()
+        self.mnemonic_indices = {}
 
         style = ttk.Style(self)
         style.configure("Night.Menu.TButton", background=INK, foreground=TEXT, padding=(11, 4),
@@ -86,6 +95,11 @@ class MenuBar(ttk.Frame):
             button.bind("<Right>", lambda _event, key=label: self.step(key, 1))
             button.bind("<Escape>", self.cancel)
         self.bind_key("<F10>", self.focus_menu)
+        self.bind_key("<FocusIn>", lambda event: self.track_keys(event.widget))
+        self.bind("<KeyPress>", self.key_press)
+        self.bind("<KeyRelease>", self.key_release)
+        self.bind("<FocusOut>", self.clear_alt)
+        self.track_keys(window.focus_get() or window)
         locale(window).widgets.add(self)
         self.translate()
         tk.Frame(self, height=1, background=LINE).pack(fill="x")
@@ -99,9 +113,54 @@ class MenuBar(ttk.Frame):
             text = tr(self.window, label)
             underline = self.underlines.get(label, 0)
             key = keys.get(getattr(label, "key", None), text[underline].lower())
-            button.configure(text=text, underline=text.lower().index(key))
+            self.mnemonic_indices[button] = text.lower().index(key)
+            button.configure(text=text)
             sequence = f"<Alt-KeyPress-{key}>"
-            self.mnemonics[sequence] = self.window.bind(sequence, lambda _event, b=button: self.invoke(b), add="+")
+            self.mnemonics[sequence] = self.window.bind(
+                sequence, lambda event, b=button: self.mnemonic(event, b), add="+"
+            )
+        self.show_cues(self.cues_visible)
+
+    def track_keys(self, widget):
+        # Observe the chord before an entry or canvas class binding can consume it.
+        tags = widget.bindtags()
+        if str(self) not in tags:
+            widget.bindtags((str(self), *tags))
+            self.tracked.add(widget)
+
+    def clear_alt(self, _event=None):
+        self.alt_key = None
+        self.alt_alone = False
+
+    def key_press(self, event):
+        if event.keysym in ALT_KEYS and self.alt_key is None:
+            self.alt_key = event.keysym
+            self.alt_alone = not event.state & SHIFT_OR_CONTROL
+        elif event.keysym != self.alt_key:
+            self.alt_alone = False
+        if event.keysym == "Escape" and self.cues_visible and not self.posting:
+            return self.cancel(event)
+
+    def key_release(self, event):
+        if event.keysym != self.alt_key:
+            return
+        toggle = self.alt_alone and not event.state & SHIFT_OR_CONTROL
+        self.clear_alt()
+        if toggle:
+            if self.posting:
+                self.window._night_popup.close()
+                return "break"
+            return self.cancel(event) if self.cues_visible else self.focus_menu(event)
+
+    def show_cues(self, visible):
+        self.cues_visible = visible
+        for button, index in self.mnemonic_indices.items():
+            button.configure(underline=index if visible else -1)
+
+    def mnemonic(self, event, button):
+        self.alt_alone = False
+        if not event.state & CONTROL:
+            return self.invoke(button)
 
     def bind_key(self, sequence, callback):
         self.bindings[sequence] = self.window.bind(sequence, callback, add="+")
@@ -115,6 +174,7 @@ class MenuBar(ttk.Frame):
         return "break"
 
     def focus_menu(self, _event):
+        self.show_cues(True)
         current = self.window.focus_get()
         if current not in self.buttons.values():
             self.return_focus = current
@@ -131,6 +191,7 @@ class MenuBar(ttk.Frame):
         return "break"
 
     def cancel(self, _event):
+        self.show_cues(False)
         target, self.return_focus = self.return_focus, None
         if target is not None and target.winfo_exists() and target.winfo_viewable():
             target.focus_set()
@@ -140,7 +201,7 @@ class MenuBar(ttk.Frame):
         if self.posting:
             return
         button = self.buttons[label]
-        previous = self.window.focus_get()
+        switching = False
         self.posting = True
         button.state(["selected"])
 
@@ -148,26 +209,34 @@ class MenuBar(ttk.Frame):
             self.posting = False
             if button.winfo_exists():
                 button.state(["!selected"])
-                if (previous in self.buttons.values()
-                        and self.window.focus_get() in self.buttons.values()):
+                if not switching:
                     self.cancel(None)
+
+        def replace(target, *, keyboard=False):
+            nonlocal switching
+            switching = True
+            menu.popup.close()
+            if keyboard:
+                self.invoke(target)
+            else:
+                target.invoke()
 
         def switch(offset):
             enabled = [item for item in self.buttons.values() if not item.instate(["disabled"])]
-            self.invoke(enabled[(enabled.index(button) + offset) % len(enabled)])
+            replace(enabled[(enabled.index(button) + offset) % len(enabled)], keyboard=True)
 
         def hover_switch(x, y):
             target = self.winfo_containing(x, y)
             if target is button or target not in self.buttons.values() or target.instate(["disabled"]):
                 return False
-            menu.popup.close()
-            target.invoke()
+            replace(target)
             return True
 
         try:
             button.update_idletasks()
             menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height(),
-                          keyboard=self.keyboard, on_close=finished, switch=switch, hover_switch=hover_switch)
+                          keyboard=self.keyboard, on_close=finished, switch=switch, hover_switch=hover_switch,
+                          key_tag=str(self))
         except tk.TclError:
             finished()
             raise
@@ -175,4 +244,7 @@ class MenuBar(ttk.Frame):
     def destroy(self):
         for sequence, callback in (self.bindings | self.mnemonics).items():
             self.window.unbind(sequence, callback)
+        for widget in self.tracked:
+            if widget.winfo_exists():
+                widget.bindtags(tuple(tag for tag in widget.bindtags() if tag != str(self)))
         super().destroy()

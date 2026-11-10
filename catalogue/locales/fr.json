@@ -154,7 +154,6 @@
   "menus_contextuels": "Menus contextuels",
   "fenetres_daide": "Fenêtres d’aide",
   "fermer": "Fermer",
-  "impossible_douvrir_le_depot_dans_le_navigateur": "Impossible d’ouvrir le dépôt dans le navigateur.",
   "doublons_exacts": "Doublons exacts",
   "preparation_de_la_verification": "Préparation de la vérification…",
   "groupe_copie": "Groupe / copie",
@@ -340,7 +339,7 @@
   "help_tags": "Faites un clic droit sur un résultat pour gérer ses tags ou l’ajouter aux favoris. Retrouvez les fichiers classés dans Favoris et sous Mes rayons, à travers les collections de la bibliothèque active.",
   "help_backup": "Dans Catalogue, choisissez Sauvegarder le catalogue… pour copier le catalogue et ses classements. Restaurer une sauvegarde… reprend les données et les réglages sauvegardés sans réinventorier les dossiers. Les fichiers des sources restent dans leurs dossiers.",
   "shortcut_home": "Tab déplace le focus entre les commandes. Entrée ou Espace ouvre la bibliothèque dont le bouton est sélectionné.",
-  "shortcut_bar": "F10 place le focus sur la barre. Utilisez ← et → pour choisir un menu, puis Entrée pour l’ouvrir. Alt+C ouvre Catalogue, Alt+B Bibliothèques, Alt+A Affichage et Alt+I Aide. Alt+R ouvre Recherche si la combinaison parvient à l’application. Alt+L ouvre Langue.",
+  "shortcut_bar": "Alt seul affiche ou masque les lettres soulignées. F10 place le focus sur la barre, en commençant par Bibliothèques. Utilisez ← et → pour choisir un menu, puis Entrée pour l’ouvrir. Échap masque les repères et rend le focus. Les raccourcis restent actifs sans les repères. Alt+B ouvre Bibliothèques, Alt+C Catalogue, Alt+A Affichage, Alt+L Langue et Alt+I Aide. Alt+R ouvre Recherche si la combinaison parvient à l’application.",
   "shortcut_menu": "↑ et ↓ parcourent les entrées, Début et Fin vont à la première ou à la dernière. Entrée ou Espace active l’entrée sélectionnée. → ouvre un sous-menu quand il est sélectionné, et ← revient au panneau parent. Sur un menu principal, ← et → permettent de passer au menu voisin. Échap ferme le panneau courant ou quitte la barre.",
   "shortcut_context": "Maj+F10 ou la touche Menu ouvre les commandes de l’élément actif dans l’arborescence, la Liste, la Mosaïque ou le tableau des formats dépliés.",
   "shortcut_grid": "Les quatre flèches déplacent la sélection entre les tuiles lorsque la grille a le focus.",
@@ -349,5 +348,7 @@
   "shortcut_default": "Ctrl+0. Sur AZERTY, utilisez Ctrl+à sans Maj sur la touche 0/à, ou Ctrl+0 au pavé numérique.",
   "shortcut_help": "↑ et ↓ font défiler le texte, Page précédente et Page suivante changent de page. Début et Fin vont aux extrémités. Tab rejoint les boutons et Échap ferme la fenêtre.",
   "duplicate_progress": "{phase} · {done} sur {total}",
-  "duplicate_finished": "{status} le {time}."
+  "duplicate_finished": "{status} le {time}.",
+  "brand_site": "Site {brand}",
+  "brand_site_error": "Impossible d’ouvrir le site {brand} dans le navigateur."
 }
