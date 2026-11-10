@@ -29,8 +29,10 @@ if ($CompilerVersion -ne '7.1.1') {
     throw "Expected Inno Setup 7.1.1. Found: $CompilerVersion"
 }
 
-$Version = Invoke-BuildTool $PythonExe @('-I', '-c', "import runpy,sys; print(runpy.run_path(sys.argv[1])['__version__'])", (Join-Path $Root 'catalogue/__init__.py'))
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+$Version, $WindowsVersion = Invoke-BuildTool $PythonExe @('-I', '-c',
+    "import runpy,sys; values = runpy.run_path(sys.argv[1]); print(values['__version__']); print('.'.join(map(str, values['WINDOWS_VERSION'])))",
+    (Join-Path $Root 'catalogue/__init__.py'))
+if ($Version -notmatch '^(alpha-)?\d+\.\d+\.\d+$') {
     throw "Invalid product version: $Version"
 }
 
@@ -55,7 +57,7 @@ finally {
 }
 
 $Application = Join-Path $Output 'Ma-Mediatheque'
-Invoke-BuildTool $InnoCompiler @("/DProductVersion=$Version", "/DSourceDir=$Application",
+Invoke-BuildTool $InnoCompiler @("/DProductVersion=$Version", "/DWindowsVersion=$WindowsVersion", "/DSourceDir=$Application",
     "/DOutputDir=$Output", (Join-Path $PSScriptRoot 'setup.iss'))
 
 $Zip = Join-Path $Output "Ma-Mediatheque-$Version-windows-x64.zip"

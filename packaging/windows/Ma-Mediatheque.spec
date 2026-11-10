@@ -12,7 +12,7 @@ root = Path(SPECPATH).resolve().parents[1]
 package = root / "catalogue"
 product = run_path(str(package / "__init__.py"))
 version = product["__version__"]
-file_version = (*map(int, version.split(".")), 0)
+file_version = product["WINDOWS_VERSION"]
 icon = package / "art" / "Ma-Mediatheque.ico"
 metadata = VSVersionInfo(
     ffi=FixedFileInfo(filevers=file_version, prodvers=file_version, fileType=1),

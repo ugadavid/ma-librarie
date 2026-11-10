@@ -6,6 +6,8 @@ Catalogue local de livres, films et autres fichiers pour Windows 11. Une collect
 
 Les versions distribuées sont disponibles dans les [releases GitHub](https://github.com/ugadavid/ma-librarie/releases). Téléchargez l’installateur ou le ZIP de la version choisie avec le fichier `SHA256SUMS.txt`. Dans PowerShell, calculez l’empreinte du fichier téléchargé avec `Get-FileHash -Algorithm SHA256 -LiteralPath <fichier>`, puis comparez-la à la ligne correspondante.
 
+Pour la recette `alpha-0.1.20`, les fichiers sont `Ma-Mediatheque-alpha-0.1.20-windows-x64-setup.exe` et `Ma-Mediatheque-alpha-0.1.20-windows-x64.zip`. Le [rapport ML‑020a](reports/ML-020a_version_alpha_recette_windows.md) donne les empreintes et le protocole pour une VM hors ligne.
+
 L’installateur installe Ma Médiathèque pour l’utilisateur courant et ajoute un raccourci au menu Démarrer. Le raccourci Bureau est facultatif. Pour utiliser le ZIP, extrayez tout le dossier puis ouvrez **Ma-Mediatheque.exe**. Les deux livrables embarquent Python, Tk/Tcl, SQLite, Pillow et pypdf.
 
 Le ZIP, l’installation et les sources utilisent le même catalogue dans **%LOCALAPPDATA%\MaLibrarie**. L’installation se trouve dans **%LOCALAPPDATA%\Programs\Ma Mediatheque**. Une réinstallation ou une mise à jour retrouve le catalogue existant. La désinstallation standard retire les binaires et raccourcis et conserve le catalogue, les réglages et les sauvegardes.
@@ -18,7 +20,7 @@ Utilisez **CPython 3.13.5 x64** avec Tkinter/Tcl-Tk et **Inno Setup 7.1.1 x64**.
 .\packaging\windows\build.ps1 -InnoCompiler 'C:\Program Files\Inno Setup 7\ISCC.exe'
 ```
 
-Passez le chemin réel de `ISCC.exe`. Le paramètre facultatif `-PythonExe` sélectionne un interpréteur précis. Dans `dist/windows/<version>/`, le script produit le dossier exécutable **Ma-Mediatheque**, le ZIP, l’installateur et **SHA256SUMS.txt**. Les fichiers distribués gardent leur dossier `_internal` à côté de l’exécutable.
+Passez le chemin réel de `ISCC.exe`. Le paramètre facultatif `-PythonExe` sélectionne un interpréteur précis. Dans `dist/windows/alpha-0.1.20/`, le script produit le dossier exécutable **Ma-Mediatheque**, le ZIP, l’installateur et **SHA256SUMS.txt**. Les fichiers distribués gardent leur dossier `_internal` à côté de l’exécutable.
 
 ## Démarrer depuis les sources sous Windows
 
