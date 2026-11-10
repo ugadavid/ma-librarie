@@ -1,5 +1,6 @@
 import gc
 import os
+import time
 import tkinter as tk
 import unittest
 from unittest.mock import patch
@@ -84,4 +85,44 @@ class ChromeTests(unittest.TestCase):
         window.update()
         self.assertEqual(["action"], seen)
         self.assertIsNone(menu.popup)
+        self.assertEqual(entry, window.focus_get())
+
+    def test_hover_switches_top_menu_with_submenu_open_and_restores_focus(self):
+        window = self.window()
+        entry = tk.Entry(window)
+        entry.pack()
+        first = NightMenu(window, tearoff=False)
+        second = NightMenu(window, tearoff=False)
+        child = NightMenu(first, tearoff=False)
+        child.add_command(label="Témoin")
+        first.add_cascade(label="Sous-menu", menu=child)
+        second.add_command(label="Autre")
+        bar = chrome.MenuBar(window, window, (("Catalogue", first), ("Bibliothèques", second)))
+        bar.pack(fill="x")
+        window.update()
+        entry.focus_force()
+        bar.buttons["Catalogue"].invoke()
+        first.popup.levels[0].step(1)
+        first.popup.open_child(first.popup.levels[0], keyboard=True)
+        window.update()
+        previous = first.popup
+        target = bar.buttons["Bibliothèques"]
+        x = target.winfo_rootx() + target.winfo_width() // 2
+        y = target.winfo_rooty() + target.winfo_height() // 2
+
+        target.state(["disabled"])
+        with patch.object(window, "winfo_pointerxy", return_value=(x, y)) as pointer:
+            time.sleep(.05)
+            window.update()
+            self.assertIs(first.popup, previous)
+            target.state(["!disabled"])
+            pointer.return_value = x + 1, y
+            time.sleep(.05)
+            window.update()
+        self.assertTrue(previous.closed)
+        self.assertFalse(previous.levels)
+        self.assertIsNotNone(second.popup)
+        self.assertTrue(target.instate(["selected"]))
+        second.popup.close()
+        window.update()
         self.assertEqual(entry, window.focus_get())

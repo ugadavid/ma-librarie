@@ -119,6 +119,7 @@ class MenuBar(ttk.Frame):
         previous = self.window.focus_get()
         self.posting = True
         button.state(["selected"])
+
         def finished():
             self.posting = False
             if button.winfo_exists():
@@ -131,10 +132,18 @@ class MenuBar(ttk.Frame):
             enabled = [item for item in self.buttons.values() if not item.instate(["disabled"])]
             self.invoke(enabled[(enabled.index(button) + offset) % len(enabled)])
 
+        def hover_switch(x, y):
+            target = self.winfo_containing(x, y)
+            if target is button or target not in self.buttons.values() or target.instate(["disabled"]):
+                return False
+            menu.popup.close()
+            target.invoke()
+            return True
+
         try:
             button.update_idletasks()
             menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height(),
-                          keyboard=self.keyboard, on_close=finished, switch=switch)
+                          keyboard=self.keyboard, on_close=finished, switch=switch, hover_switch=hover_switch)
         except tk.TclError:
             finished()
             raise

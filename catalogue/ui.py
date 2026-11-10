@@ -195,6 +195,7 @@ class App(ttk.Frame):
         self.result_library = None
         self.events = queue.SimpleQueue()
         self.scanning = False
+        self.scan_poll = None
         self.scan_window = None
         self.resize_start = None
         self.pending_widths = {}
@@ -331,6 +332,8 @@ class App(ttk.Frame):
         self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
         self.catalogue_menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
         self.catalogue_menu.add_command(label="Accueil", command=self.show_home)
+        self.catalogue_menu.add_separator()
+        self.catalogue_menu.add_command(label="Quitter", command=self.close)
 
         for key, (label, _) in LIBRARIES.items():
             if key == UNCLASSIFIED:
@@ -1129,7 +1132,10 @@ class App(ttk.Frame):
         state = "normal" if active else "disabled"
         for menu in (self.catalogue_menu, self.search_menu, self.display_menu):
             for index in range(menu.index("end") + 1):
-                menu.entryconfigure(index, state=state)
+                if menu.type(index) != "separator":
+                    menu.entryconfigure(index, state=state)
+        if self.scanning:
+            self.catalogue_menu.entryconfigure("Quitter", state="normal")
         if self.at_home:
             for menu in (self.search_menu, self.display_menu):
                 for index in range(menu.index("end") + 1):
@@ -1475,9 +1481,10 @@ class App(ttk.Frame):
                 self.events.put(("failed", str(exc) or type(exc).__name__))
 
         threading.Thread(target=worker, daemon=True).start()
-        self.after(75, self.poll_scan)
+        self.scan_poll = self.after(75, self.poll_scan)
 
     def poll_scan(self):
+        self.scan_poll = None
         while not self.events.empty():
             event, data = self.events.get_nowait()
             if event == "progress":
@@ -1504,7 +1511,7 @@ class App(ttk.Frame):
             self.error_button.state(["!disabled"] if self.errors else ["disabled"])
             self.load_roots(keep_scope=True)
         if self.scanning:
-            self.after(75, self.poll_scan)
+            self.scan_poll = self.after(75, self.poll_scan)
 
     def save_catalogue(self):
         if self.busy:
@@ -1641,6 +1648,8 @@ class App(ttk.Frame):
         text.configure(state="disabled")
 
     def destroy(self):
+        if self.scan_poll is not None:
+            self.after_cancel(self.scan_poll)
         if self.owns_session:
             self.session.close()
         super().destroy()

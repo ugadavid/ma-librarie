@@ -35,12 +35,12 @@ class NightMenu(tk.Menu):
         super().__init__(parent, **options)
         self.popup = None
 
-    def tk_popup(self, x, y, *, keyboard=False, on_close=None, switch=None):
+    def tk_popup(self, x, y, *, keyboard=False, on_close=None, switch=None, hover_switch=None):
         owner = self.master.winfo_toplevel()
         current = getattr(owner, "_night_popup", None)
         if current:
             current.close()
-        self.popup = Popup(self, owner, x, y, keyboard, on_close, switch)
+        self.popup = Popup(self, owner, x, y, keyboard, on_close, switch, hover_switch)
 
     def destroy(self):
         if self.popup is not None:
@@ -49,24 +49,59 @@ class NightMenu(tk.Menu):
 
 
 class Popup:
-    def __init__(self, model, owner, x, y, keyboard, on_close, switch):
+    def __init__(self, model, owner, x, y, keyboard, on_close, switch, hover_switch):
         self.model = model
         self.owner = owner
         if not hasattr(owner, "_night_popup_host"):
             owner._night_popup_host = tk.Frame(owner)
         self.on_close = on_close
         self.switch = switch
+        self.hover_switch = hover_switch
+        self.pointer = owner.winfo_pointerxy()
         self.focus = owner.focus_get()
         self.grab = owner.grab_current()
         self.closed = False
         self.levels = []
         self.timer = None
         self.blur_timer = None
+        self.pointer_timer = None
         self.face = font.nametofont("TkMenuFont", root=owner)
         self.height = self.face.metrics("linespace") + 12
         self.show(model, x, y, keyboard=keyboard)
         owner._night_popup = self
         self.levels[0].window.grab_set()
+        self.pointer_timer = owner.after(30, self.track_pointer)
+
+    def level_at(self, x, y):
+        for level in reversed(self.levels):
+            left = level.window.winfo_rootx()
+            top = level.window.winfo_rooty()
+            if left <= x < left + level.width and top <= y < top + level.height:
+                return level
+        return None
+
+    def track_pointer(self):
+        # Tk's Windows grab can suppress motion to the bar and to other popup windows.
+        self.pointer_timer = None
+        position = self.owner.winfo_pointerxy()
+        if position != self.pointer:
+            self.pointer = position
+            if self.hover_switch and self.hover_switch(*position):
+                return
+            level = self.level_at(*position)
+            if level is not None:
+                level.hover(*position)
+        self.pointer_timer = self.owner.after(30, self.track_pointer)
+
+    def press(self, event):
+        if self.level_at(event.x_root, event.y_root) is None:
+            self.close(force_focus=False)
+        return "break"
+
+    def release(self, event):
+        level = self.level_at(event.x_root, event.y_root)
+        if level is not None:
+            level.release(event.x_root, event.y_root)
 
     def show(self, model, x, y, *, keyboard=False, parent=None):
         level = Level(self, model, parent)
@@ -104,6 +139,8 @@ class Popup:
         if self.closed:
             return
         self.closed = True
+        if self.pointer_timer is not None:
+            self.owner.after_cancel(self.pointer_timer)
         self.cancel_timer()
         if self.blur_timer is not None:
             self.owner.after_cancel(self.blur_timer)
@@ -157,9 +194,8 @@ class Level:
         self.window.protocol("WM_DELETE_WINDOW", popup.close)
         self.canvas = tk.Canvas(self.window, background=INK, borderwidth=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=1, pady=1)
-        self.window.bind("<Motion>", self.hover)
-        self.window.bind("<ButtonPress>", self.press)
-        self.window.bind("<ButtonRelease-1>", self.release)
+        self.window.bind("<ButtonPress>", popup.press)
+        self.window.bind("<ButtonRelease-1>", popup.release)
         self.canvas.bind("<KeyPress>", self.key)
         self.canvas.bind("<FocusOut>", self.blur)
         self.positions = {}
@@ -211,10 +247,11 @@ class Level:
                 self.canvas.create_text(self.width-18, middle, text="›", fill=GOLD if index in self.enabled else color,
                                         font=self.popup.face)
 
-    def index_at(self, event):
-        if not 0 <= event.x < self.width - 2:
+    def index_at(self, x, y):
+        if not 0 <= x - self.canvas.winfo_rootx() < self.width - 2:
             return None
-        return next((i for i, (top, bottom) in self.positions.items() if top <= event.y < bottom), None)
+        local_y = y - self.canvas.winfo_rooty()
+        return next((i for i, (top, bottom) in self.positions.items() if top <= local_y < bottom), None)
 
     def select(self, index):
         if index != self.active:
@@ -227,21 +264,16 @@ class Level:
             position = self.enabled.index(self.active) if self.active in self.enabled else (-1 if offset > 0 else 0)
             self.select(self.enabled[(position + offset) % len(self.enabled)])
 
-    def hover(self, event):
-        index = self.index_at(event)
+    def hover(self, x, y):
+        index = self.index_at(x, y)
         if index not in self.enabled or index == self.active:
             return
         self.select(index)
         if self.model.type(index) == "cascade":
             self.popup.timer = self.popup.owner.after(180, lambda: self.popup.open_child(self, keyboard=False))
 
-    def press(self, event):
-        if not (0 <= event.x < self.width-2 and 0 <= event.y < self.height-2):
-            self.popup.close(force_focus=False)
-        return "break"
-
-    def release(self, event):
-        index = self.index_at(event)
+    def release(self, x, y):
+        index = self.index_at(x, y)
         if index in self.enabled:
             self.select(index)
             self.invoke()
