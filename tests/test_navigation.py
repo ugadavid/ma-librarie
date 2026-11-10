@@ -256,6 +256,7 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(("Nom", True), app.sort)
             self.assertTrue(app.previous.instate(["disabled"]))
             self.assertFalse(app.next.instate(["disabled"]))
+            self.assertIn("1 résultat sur la page 1", app.context_status.get())
             self.assertEqual(0, int(app.navigation.grid_info()["row"]))
             self.assertLess(app.navigation.winfo_rooty(), app.result_panes.winfo_rooty())
             app.next.invoke()
@@ -267,6 +268,7 @@ class NavigationTests(unittest.TestCase):
             self.assertTrue(app.next.instate(["disabled"]))
             self.assertFalse(app.previous.instate(["disabled"]))
             self.assertEqual("Page 2", app.page_label.cget("text"))
+            self.assertIn("1 résultat sur la page 2", app.context_status.get())
             self.assertEqual(4, len(app.detail_files.rows))
 
             app.display_menu.invoke("Mosaïque")

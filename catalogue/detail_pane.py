@@ -1,7 +1,7 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import font, ttk
+from tkinter import ttk
 
 from .covers import load_cover
 from .night import INK
@@ -30,9 +30,7 @@ class DetailPane(ttk.Frame):
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content, width=event.width))
         self.canvas = canvas
 
-        self.title_font = font.nametofont("TkDefaultFont").copy()
-        self.title_font.configure(size=12, weight="bold")
-        self.title = ttk.Label(panel, font=self.title_font, justify="left")
+        self.title = ttk.Label(panel, font="NightDetail", justify="left")
         self.title.pack(fill="x")
         self.metadata = ttk.Label(panel, justify="left")
         self.metadata.pack(fill="x", pady=(6, 3))

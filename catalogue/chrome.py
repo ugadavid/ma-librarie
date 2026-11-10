@@ -65,11 +65,14 @@ class MenuBar(ttk.Frame):
 
         row = ttk.Frame(self)
         row.pack(fill="x")
+        if hasattr(window, "text_fonts"):
+            row.configure(height=window.text_fonts.max_line("TkDefaultFont") + 16)
+            row.pack_propagate(False)
         for label, menu in entries:
             button = ttk.Button(row, text=label, underline=0, style="Night.Menu.TButton",
                                 command=lambda m=menu, key=label: self.post(key, m))
             self.buttons[label] = button
-            button.pack(side="left")
+            button.pack(side="left", fill="y")
             button.bind("<Return>", lambda _event, b=button: self.invoke(b))
             button.bind("<Left>", lambda _event, key=label: self.step(key, -1))
             button.bind("<Right>", lambda _event, key=label: self.step(key, 1))

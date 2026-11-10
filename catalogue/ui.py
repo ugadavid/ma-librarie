@@ -17,7 +17,7 @@ from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
 from .mosaic import Mosaic
 from .chrome import MenuBar, tint_title
-from .night import Art, Home, TEAL, use_theme
+from .night import Art, Home, TEAL, TEXT_MAX, TEXT_MIN, use_theme
 from .night_menu import NightMenu
 from .store import LIBRARIES, STATES, UNCLASSIFIED, Catalogue
 from .tag_dialog import TagDialog
@@ -164,7 +164,9 @@ class ScanWindow(NightWindow):
 
 class App(ttk.Frame):
     def __init__(self, window, catalogue, session=None, *, start_home=False):
-        use_theme(window)
+        self.text_fonts = use_theme(window)
+        self.text_offset = max(TEXT_MIN, min(TEXT_MAX, catalogue.text_offset()))
+        self.text_fonts.apply(self.text_offset)
         super().__init__(window, padding=10)
         self.window = window
         self.catalogue = catalogue
@@ -211,6 +213,7 @@ class App(ttk.Frame):
         self.detail_layout_pending = False
         self.pack(fill="both", expand=True)
         self.build()
+        self.text_binding = window.bind("<Control-KeyPress>", self.text_shortcut, add="+")
         self.bind("<Map>", lambda _event: tint_title(window))
         self.load_collections()
         if start_home:
@@ -233,16 +236,18 @@ class App(ttk.Frame):
         self.query.trace_add("write", self.schedule_search)
         self.format_indicator = ttk.Label(search_bar)
 
-        panes = ttk.Panedwindow(self.workspace, orient="horizontal")
+        panes = self.workspace_panes = ttk.Panedwindow(self.workspace, orient="horizontal")
         panes.pack(fill="both", expand=True)
         sources = ttk.Frame(panes, padding=(0, 0, 8, 0))
         results = ttk.Frame(panes)
         panes.add(sources, weight=0)
         panes.add(results, weight=4)
 
-        ttk.Label(sources, text="Rayons et collections").pack(anchor="w")
+        self.sources_label = ttk.Label(sources, text="Rayons et collections")
+        self.sources_label.pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
         self.tree.column("#0", width=185, stretch=True)
+        panes.bind("<Configure>", self.layout_source_pane)
         self.tree.tag_configure("automatic", foreground=TEAL)
         self.tree.bind("<<TreeviewOpen>>", self.expand_tree)
         self.tree.bind("<<TreeviewSelect>>", self.select_scope)
@@ -259,10 +264,11 @@ class App(ttk.Frame):
         self.navigation.grid(row=0, column=1, sticky="e")
         self.previous = ttk.Button(self.navigation, text="Précédent", command=lambda: self.move_page(-1))
         self.next = ttk.Button(self.navigation, text="Suivant", command=lambda: self.move_page(1))
-        self.page_label = ttk.Label(self.navigation, width=12, anchor="center", justify="center", wraplength=96)
+        self.page_label = ttk.Label(self.navigation, width=14, anchor="center", justify="center", wraplength=154)
         for widget in (self.previous, self.page_label, self.next):
             widget.pack(side="left")
         self.result_header.bind("<Configure>", self.layout_results_header)
+        self.navigation.bind("<Configure>", self.layout_results_header)
         self.mosaic = Mosaic(
             results, self.select_tile, self.show_tile_menu, self.file_state, self.change_badge, self.expand_format
         )
@@ -287,8 +293,9 @@ class App(ttk.Frame):
         self.headings = dict(zip(columns, labels))
         self.build_menus()
         self.default_widths = dict(zip(columns, (235, 155, 85, 85, 125, 145, 105)))
-        for column, minimum in zip(columns, (95, 95, 64, 65, 92, 105, 80)):
-            self.table.column(column, minwidth=minimum, stretch=False)
+        self.minimum_widths = dict(zip(columns, (95, 95, 64, 65, 92, 105, 80)))
+        for column in columns:
+            self.table.column(column, stretch=False)
         self.load_column_widths()
         self.table.bind("<ButtonPress-1>", self.click_result)
         self.table.bind("<ButtonRelease-1>", self.end_column_resize)
@@ -304,16 +311,31 @@ class App(ttk.Frame):
         details = self.list_details = ttk.Frame(self.workspace, padding=(0, 6))
         details.pack(fill="x")
         self.details = tk.StringVar()
-        ttk.Label(details, textvariable=self.details, wraplength=980).pack(anchor="w")
+        summary = ttk.Label(details, textvariable=self.details)
+        summary.pack(anchor="w")
+        details.bind("<Configure>", lambda event: summary.configure(wraplength=event.width))
         self.full_path = tk.StringVar()
         ttk.Entry(details, textvariable=self.full_path, state="readonly").pack(fill="x", pady=4)
 
-        bottom = self.bottom = ttk.Frame(self.workspace)
-        bottom.pack(fill="x")
+        bottom = ttk.Frame(self)
+        bottom.pack(side="bottom", fill="x", before=self.workspace)
+        bottom.columnconfigure(0, weight=1)
+        bottom.rowconfigure(0, minsize=self.text_fonts.max_line("TkDefaultFont") + 4)
+        bottom.rowconfigure(1, minsize=self.text_fonts.max_line("TkDefaultFont") + 22)
+        self.context_status = tk.StringVar()
+        context = ttk.Label(bottom, textvariable=self.context_status, style="Night.Note.TLabel")
+        context.grid(row=0, column=0, columnspan=2, sticky="w")
         self.status = tk.StringVar(value="Prêt")
-        ttk.Label(bottom, textvariable=self.status, wraplength=825).pack(side="left")
+        operation = ttk.Label(bottom, textvariable=self.status)
+        operation.grid(row=1, column=0, sticky="w")
         self.error_button = ttk.Button(bottom, text="Voir les erreurs", command=self.show_errors)
-        self.error_button.pack(side="right")
+        self.error_button.grid(row=1, column=1, padx=(8, 0), sticky="e")
+
+        def wrap_status(event):
+            context.configure(wraplength=event.width)
+            operation.configure(wraplength=max(80, event.width - self.error_button.winfo_reqwidth() - 8))
+
+        bottom.bind("<Configure>", wrap_status)
         self.error_button.state(["disabled"])
         self.apply_results_view()
 
@@ -367,6 +389,46 @@ class App(ttk.Frame):
         self.display_menu.add_cascade(label="Trier par", menu=self.sort_menu)
         self.display_menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
                                           command=self.toggle_grouping)
+        self.display_menu.add_separator()
+        self.text_commands = (
+            ("Agrandir le texte", "Ctrl++ / Ctrl+=", 1),
+            ("Réduire le texte", "Ctrl+−", -1),
+            ("Taille du texte par défaut", "Ctrl+0 / Ctrl+à", 0),
+        )
+        for label, shortcut, delta in self.text_commands:
+            self.display_menu.add_command(label=label, accelerator=shortcut,
+                                          command=lambda step=delta: self.change_text_size(step))
+
+    def text_shortcut(self, event):
+        steps = {"plus": 1, "equal": 1, "KP_Add": 1, "minus": -1, "KP_Subtract": -1,
+                 "0": 0, "agrave": 0, "KP_0": 0}
+        if event.keysym in steps:
+            self.change_text_size(steps[event.keysym])
+            return "break"
+
+    def change_text_size(self, step):
+        if self.busy:
+            return
+        offset = max(TEXT_MIN, min(TEXT_MAX, self.text_offset + step)) if step else 0
+        if offset == self.text_offset:
+            return
+        try:
+            self.catalogue.save_text_offset(offset)
+        except sqlite3.Error as exc:
+            messagebox.showerror("Taille du texte", str(exc), parent=self)
+            return
+        self.apply_text_offset(offset)
+
+    def apply_text_offset(self, offset):
+        self.text_offset = offset
+        self.text_fonts.apply(offset)
+        self.load_column_widths()
+        self.layout_source_pane()
+        self.layout_results_header()
+        if self.mosaic.entries:
+            self.mosaic.redraw()
+            self.mosaic.reveal(self.mosaic.selected)
+        self.update_controls()
 
     def show_home(self):
         if self.busy or self.at_home:
@@ -374,6 +436,7 @@ class App(ttk.Frame):
         if self.home is None:
             self.home = Home(self, self.enter_library)
         self.at_home = True
+        self.update_context_status()
         self.workspace.pack_forget()
         self.home.pack(fill="both", expand=True)
         self.home.buttons["books"].focus_set()
@@ -394,10 +457,20 @@ class App(ttk.Frame):
         self.show_workspace()
         self.load_collections()
 
-    def layout_results_header(self, event):
-        width = event.width
+    def layout_source_pane(self, _event=None):
+        face = self.text_fonts["TkDefaultFont"]
+        minimum = max(185, face.measure(self.sources_label.cget("text")) + 28)
+        self.tree.column("#0", minwidth=minimum - 18)
+        if self.workspace_panes.winfo_width() >= 2 * minimum:
+            sash = self.workspace_panes.sashpos(0)
+            if sash < minimum:
+                self.workspace_panes.sashpos(0, minimum)
+
+    def layout_results_header(self, _event=None):
+        width = self.result_header.winfo_width()
         pagination_width = self.navigation.winfo_reqwidth()
-        separate = width < pagination_width + 150
+        title_width = self.text_fonts["NightTitle"].measure(self.scope_label.cget("text"))
+        separate = width < pagination_width + max(150, min(260, title_width + 16))
         row = 1 if separate else 0
         if int(self.navigation.grid_info()["row"]) != row:
             self.navigation.grid_configure(row=row, column=0 if separate else 1,
@@ -601,7 +674,8 @@ class App(ttk.Frame):
             root_id, relative = self.scope
             root = self.roots[root_id]
             node = f'collection-{root["collection_id"]}'
-            label = f'{Path(root["path"]) / relative} · {STATES[root["state"]]}'
+            folder = Path(root["path"]) / relative
+            label = f'{folder.name or str(folder)} · {STATES[root["state"]]}'
         elif node in self.collection_items:
             label = self.collection_items[node]["name"]
         elif node == "favorites":
@@ -623,6 +697,31 @@ class App(ttk.Frame):
     def show_scope_title(self, scope):
         library, root_title = LIBRARIES[self.library.get()]
         self.scope_label.configure(text=f"{library} › {scope}" if scope else root_title)
+        parts = [library]
+        if self.scope:
+            root_id, relative = self.scope
+            source = Path(self.roots[root_id]["path"])
+            parts.extend((self.active_collection["name"], source.name or str(source), *Path(relative).parts))
+        else:
+            parts.append(scope or root_title)
+        self.scope_status = " › ".join(parts)
+        self.layout_results_header()
+
+    def update_context_status(self, more=False):
+        if self.at_home:
+            self.context_status.set("Accueil")
+            return
+        count = len(self.rows)
+        results = f"{count} résultat{'s' if count > 1 else ''}" if count else "Aucun résultat"
+        if self.page or more:
+            results += f" sur la page {self.page + 1}"
+        parts = [self.scope_status]
+        if self.selected_extensions is not None:
+            parts.append(self.format_indicator.cget("text"))
+        if query := self.query.get().strip():
+            parts.append(f"Recherche « {query} »")
+        parts.append(results)
+        self.context_status.set("  ·  ".join(parts))
 
     def show_context_menu(self, event):
         if self.busy:
@@ -720,10 +819,14 @@ class App(ttk.Frame):
         self.pending_search = self.after(180, self.refresh_results)
 
     def load_column_widths(self):
-        saved = self.catalogue.column_widths()
+        saved = self.catalogue.column_widths() | self.pending_widths
+        face = self.text_fonts["TkHeadingFont"]
         for column, width in self.default_widths.items():
-            self.table.column(column, width=max(self.table.column(column, "minwidth"),
-                                                saved.get(column, width)))
+            minimum = self.minimum_widths[column]
+            if self.text_offset > 0:
+                label = "Taille (o)" if column == "size" else self.headings[column]
+                minimum = max(minimum, face.measure(label + " ▼") + 14)
+            self.table.column(column, minwidth=minimum, width=max(minimum, saved.get(column, width)))
 
     def result_widths(self):
         return {column: self.table.column(column, "width") for column in self.headings}
@@ -856,6 +959,7 @@ class App(ttk.Frame):
         empty = ("Aucun favori correspondant" if self.shelf == "favorites" else
                  "Aucun résultat dans ce rayon" if self.shelf is not None else "Aucun résultat")
         self.page_label.configure(text=f"Page {self.page + 1}" if rows else empty)
+        self.update_context_status(more=len(rows) > PAGE_SIZE)
         if self.view_mode.get() == "mosaic":
             self.show_mosaic_page()
         self.update_details()
@@ -989,7 +1093,7 @@ class App(ttk.Frame):
                 self.detail_layout_pending = True
                 self.layout_detail()
         else:
-            self.list_details.pack(fill="x", before=self.bottom)
+            self.list_details.pack(side="bottom", fill="x", before=self.workspace_panes)
 
     def mosaic_item(self, item):
         return self.table.parent(item) if item in self.child_rows else item
@@ -1010,7 +1114,7 @@ class App(ttk.Frame):
         self.expanded_format = item, extension
         label = format_label(extension.upper(), len(members))
         self.mosaic_files.show(members, f'{row["title"]} · {label} · Formats et emplacements')
-        self.mosaic_files.pack(fill="x", after=self.mosaic, pady=(6, 3))
+        self.mosaic_files.pack(side="bottom", fill="x", before=self.mosaic, pady=(6, 3))
 
     def close_format(self):
         self.expanded_format = None
@@ -1139,8 +1243,13 @@ class App(ttk.Frame):
         if self.at_home:
             for menu in (self.search_menu, self.display_menu):
                 for index in range(menu.index("end") + 1):
-                    menu.entryconfigure(index, state="disabled")
+                    if menu.type(index) != "separator":
+                        menu.entryconfigure(index, state="disabled")
             self.catalogue_menu.entryconfigure("Accueil", state="disabled")
+        for label, _, step in self.text_commands:
+            enabled = active and (self.text_offset < TEXT_MAX if step > 0 else
+                                  self.text_offset > TEXT_MIN if step < 0 else self.text_offset != 0)
+            self.display_menu.entryconfigure(label, state="normal" if enabled else "disabled")
         if self.selected_extensions is None:
             self.search_menu.entryconfigure("Réinitialiser le filtre", state="disabled")
         if self.view_mode.get() == "mosaic":
@@ -1489,6 +1598,8 @@ class App(ttk.Frame):
             event, data = self.events.get_nowait()
             if event == "progress":
                 self.scan_window.show_progress(data)
+                count = self.scan_window.count.cget("text")
+                self.status.set(f"Synchronisation · source {data.position}/{data.total} · {count}")
                 continue
             if event == "done":
                 library, data = data
@@ -1621,7 +1732,7 @@ class App(ttk.Frame):
         self.error_button.state(["disabled"])
         self.sort = "Nom", False
         self.update_headings()
-        self.load_column_widths()
+        self.apply_text_offset(max(TEXT_MIN, min(TEXT_MAX, self.catalogue.text_offset())))
         self.library.set(UNCLASSIFIED if self.catalogue.collections(UNCLASSIFIED) else "books")
         mode, details = self.catalogue.view_preferences()
         self.view_mode.set(mode)
@@ -1648,6 +1759,7 @@ class App(ttk.Frame):
         text.configure(state="disabled")
 
     def destroy(self):
+        self.window.unbind("<Control-KeyPress>", self.text_binding)
         if self.scan_poll is not None:
             self.after_cancel(self.scan_poll)
         if self.owns_session:

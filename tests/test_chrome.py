@@ -101,6 +101,7 @@ class ChromeTests(unittest.TestCase):
         bar.pack(fill="x")
         window.update()
         entry.focus_force()
+        window.update()
         bar.buttons["Catalogue"].invoke()
         first.popup.levels[0].step(1)
         first.popup.open_child(first.popup.levels[0], keyboard=True)
@@ -111,7 +112,8 @@ class ChromeTests(unittest.TestCase):
         y = target.winfo_rooty() + target.winfo_height() // 2
 
         target.state(["disabled"])
-        with patch.object(window, "winfo_pointerxy", return_value=(x, y)) as pointer:
+        with (patch.object(window, "winfo_pointerxy", return_value=(x, y)) as pointer,
+              patch.object(bar, "winfo_containing", return_value=target)):
             time.sleep(.05)
             window.update()
             self.assertIs(first.popup, previous)

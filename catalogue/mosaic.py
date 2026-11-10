@@ -2,7 +2,7 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import font, ttk
+from tkinter import ttk
 
 from .book_metadata import BOOK_EXTENSIONS
 from .covers import ALBUM_EXTENSIONS, POSTER_EXTENSIONS, load_cover
@@ -10,7 +10,7 @@ from .night import CARD, GOLD, INK, LINE, MUTED, PANEL, SELECTED, TEAL, TEXT
 from .work_view import format_counts, format_label
 
 
-TILE_WIDTH = 286
+TILE_WIDTH = 270
 ROW_HEIGHT = 150
 GAP = 7
 THUMBNAIL = (92, 126)
@@ -65,9 +65,10 @@ class Mosaic(ttk.Frame):
         for key in ("Left", "Right", "Up", "Down"):
             self.canvas.bind(f"<{key}>", self.arrow)
 
-        self.face = font.nametofont("TkDefaultFont")
-        self.title_face = self.face.copy()
-        self.title_face.configure(weight="bold")
+        faces = self.winfo_toplevel().text_fonts
+        self.face = faces["TkDefaultFont"]
+        self.title_face = faces["bold"]
+        self.row_height = ROW_HEIGHT
         self.entries = ()
         self.indices = {}
         self.tiles = {}
@@ -127,62 +128,81 @@ class Mosaic(ttk.Frame):
         self.tiles.clear()
         self.format_buttons.clear()
         self.columns = max(1, self.width // TILE_WIDTH)
-        for index, (item, row) in enumerate(self.entries):
-            y = (index // self.columns) * ROW_HEIGHT + GAP
+        line = self.face.metrics("linespace")
+        title_line = self.title_face.metrics("linespace")
+        self.badge_height = line + 5
+        label_width = max(12, int(self.cell_width - 2 * GAP - 120))
+        text_layouts = []
+        self.row_height = ROW_HEIGHT
+        for item, row in self.entries:
+            title = title_lines(row["title"] or Path(row["name"]).stem or row["name"],
+                                self.title_face, label_width)
+            author_top = 16 + (1 + title.count("\n")) * title_line + 5
+            formats_top = author_top + (line + 6 if row["author"] else 0)
+            badges = self.badges(row["members"], label_width) if isinstance(row, dict) and "members" in row else []
+            bottom = formats_top + self.badge_height + (badges[-1][1] if badges else line + 7)
+            self.row_height = max(self.row_height, bottom + 2 * GAP)
+            text_layouts.append((title, author_top, formats_top, badges))
+        for index, ((item, row), (title, author_top, formats_top, badges)) in enumerate(
+                zip(self.entries, text_layouts)):
+            y = (index // self.columns) * self.row_height + GAP
             x = (index % self.columns) * self.cell_width + GAP
             right = x + self.cell_width - 2 * GAP
-            card = self.canvas.create_rectangle(x, y, right, y + ROW_HEIGHT - GAP,
+            card = self.canvas.create_rectangle(x, y, right, y + self.row_height - GAP,
                                                 fill=CARD, outline=LINE)
             self.canvas.create_rectangle(x + 8, y + 8, x + 103, y + 135, fill=PANEL, outline=LINE)
             format_name = row["extension"].upper() or "Sans extension"
             missing = {"books": "Couverture", "movies": "Affiche", "music": "Pochette"}.get(self.library, "Image")
+            placeholder = f"{missing}\nabsente" if self.face.measure(missing) <= 90 else "Pas\nd’image"
             fallback = self.canvas.create_text(
-                x + 55, y + 72, text=f"{missing}\nabsente", justify="center", font=self.face, fill=MUTED,
+                x + 55, y + 72, text=placeholder, justify="center", font=self.face, fill=MUTED,
             )
             picture = self.canvas.create_image(x + 55, y + 72)
             left = x + 115
-            label_width = max(12, int(right - left - 8))
             self.canvas.create_text(
                 left, y + 16, anchor="nw", font=self.title_face, fill=TEXT,
-                text=title_lines(row["title"] or Path(row["name"]).stem or row["name"], self.title_face, label_width),
+                text=title,
             )
             self.canvas.create_text(
-                left, y + 57, anchor="nw", font=self.face, fill=MUTED,
+                left, y + author_top, anchor="nw", font=self.face, fill=MUTED,
                 text=fit(row["author"], self.face, label_width),
             )
-            if isinstance(row, dict) and "members" in row:
-                self.draw_formats(item, row["members"], left, y + 83, right - 5)
+            if badges:
+                for dx, dy, name, label in badges:
+                    box, text = self.draw_badge(left + dx, y + formats_top + dy, label)
+                    self.format_buttons[box] = self.format_buttons[text] = (item, name.lower())
             else:
-                self.draw_badge(left, y + 83, fit(format_name, self.face, max(12, label_width - 12)))
+                self.draw_badge(left, y + formats_top, fit(format_name, self.face, max(12, label_width - 12)))
                 state = self.file_state(row)
                 annotation = " · ".join(filter(None, (self.change_badge(row), state if state != "Disponible" else "")))
                 self.canvas.create_text(
-                    left, y + 111, anchor="nw", font=self.face, fill=MUTED,
+                    left, y + formats_top + self.badge_height + 7, anchor="nw", font=self.face, fill=MUTED,
                     text=fit(annotation, self.face, label_width),
                 )
             self.tiles[item] = card, fallback, picture
             self.paint_selection(item)
             if item in self.images:
                 self.paint_image(item, self.images[item])
-        height = ((len(self.entries) + self.columns - 1) // self.columns) * ROW_HEIGHT + GAP
+        height = ((len(self.entries) + self.columns - 1) // self.columns) * self.row_height + GAP
         self.canvas.configure(scrollregion=(0, 0, self.width, height))
         self.schedule_pump()
 
-    def draw_formats(self, item, members, left, top, right):
-        x, y = left, top
+    def badges(self, members, available):
+        x = y = 0
+        badges = []
         for name, count in format_counts(members):
-            label = format_label(name, count)
-            width = self.face.measure(label) + 12
-            if x > left and x + width > right:
-                x, y = left, y + 20
-            box, text = self.draw_badge(x, y, label)
-            self.format_buttons[box] = self.format_buttons[text] = (item, name.lower())
-            x += width + 5
+            label = fit(format_label(name, count), self.face, max(12, available - 8))
+            width = self.face.measure(label) + 8
+            if x and x + width > available:
+                x, y = 0, y + self.badge_height + 3
+            badges.append((x, y, name, label))
+            x += width + 3
+        return badges
 
     def draw_badge(self, x, y, label):
-        width = self.face.measure(label) + 12
-        box = self.canvas.create_rectangle(x, y, x + width, y + 18, fill=INK, outline=GOLD)
-        text = self.canvas.create_text(x + width / 2, y + 9, text=label, font=self.face, fill=TEXT)
+        width = self.face.measure(label) + 8
+        box = self.canvas.create_rectangle(x, y, x + width, y + self.badge_height, fill=INK, outline=GOLD)
+        text = self.canvas.create_text(x + width / 2, y + self.badge_height / 2, text=label, font=self.face, fill=TEXT)
         return box, text
 
     def format_at(self, event):
@@ -214,11 +234,11 @@ class Mosaic(ttk.Frame):
         if x < 0 or y < 0:
             return None
         column = int(x // self.cell_width)
-        row = int(y // ROW_HEIGHT)
+        row = int(y // self.row_height)
         index = row * self.columns + column
         if (column < self.columns and index < len(self.entries)
                 and GAP <= x % self.cell_width <= self.cell_width - GAP
-                and y % ROW_HEIGHT >= GAP):
+                and y % self.row_height >= GAP):
             return self.entries[index][0]
         return None
 
@@ -248,14 +268,14 @@ class Mosaic(ttk.Frame):
     def reveal(self, item):
         if item not in self.indices or self.canvas.winfo_height() <= 1:
             return
-        y = self.indices[item] // self.columns * ROW_HEIGHT
+        y = self.indices[item] // self.columns * self.row_height
         top = self.canvas.canvasy(0)
         height = self.canvas.winfo_height()
-        extent = ((len(self.entries) + self.columns - 1) // self.columns) * ROW_HEIGHT + GAP
-        if y < top:
+        extent = ((len(self.entries) + self.columns - 1) // self.columns) * self.row_height + GAP
+        if y < top or (self.row_height > height and y >= top):
             self.canvas.yview_moveto(y / extent)
-        elif y + ROW_HEIGHT > top + height:
-            self.canvas.yview_moveto((y + ROW_HEIGHT - height) / extent)
+        elif y + self.row_height > top + height:
+            self.canvas.yview_moveto((y + self.row_height - height) / extent)
 
     def wheel(self, event):
         self.canvas.yview_scroll(-event.delta // 120, "units")
@@ -268,8 +288,8 @@ class Mosaic(ttk.Frame):
     def visible(self):
         if not self.canvas.winfo_ismapped():
             return ()
-        top = max(0, int(self.canvas.canvasy(0)) // ROW_HEIGHT)
-        bottom = int(self.canvas.canvasy(self.canvas.winfo_height())) // ROW_HEIGHT + 1
+        top = max(0, int(self.canvas.canvasy(0)) // self.row_height)
+        bottom = int(self.canvas.canvasy(self.canvas.winfo_height())) // self.row_height + 1
         return self.entries[top * self.columns:bottom * self.columns]
 
     def schedule_pump(self):

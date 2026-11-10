@@ -58,6 +58,32 @@ class NightTests(unittest.TestCase):
         self.assertEqual("Toutes les collections à classer", app.scope_label.cget("text"))
         self.assertIn("Import", {row["name"] for row in app.collections})
 
+    def test_text_size_persists_and_preserves_home_art_and_context(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        db = Catalogue(Path(temporary.name) / "catalogue.sqlite3")
+        window = self.window()
+        app = App(window, db, start_home=True)
+        window.update()
+        door = app.home.buttons["books"]
+        picture = next(widget for widget in door.master.winfo_children() if isinstance(widget, Art))
+        size = picture.winfo_width(), picture.winfo_height()
+        line = app.text_fonts["TkDefaultFont"].metrics("linespace")
+        for _ in range(5):
+            app.display_menu.invoke("Agrandir le texte")
+        window.update()
+        self.assertEqual(3, db.text_offset())
+        self.assertGreater(app.text_fonts["TkDefaultFont"].metrics("linespace"), line)
+        self.assertEqual(size, (picture.winfo_width(), picture.winfo_height()))
+        self.assertEqual("Accueil", app.context_status.get())
+        app.destroy()
+        reopened = App(window, Catalogue(db.filename))
+        self.assertEqual(3, reopened.text_offset)
+        self.assertIn("Livres › Tous les livres", reopened.context_status.get())
+        self.assertIn("Aucun résultat", reopened.context_status.get())
+        reopened.display_menu.invoke("Taille du texte par défaut")
+        self.assertEqual(0, db.text_offset())
+
     def test_tag_counts_scroll_cancel_apply_and_focus(self):
         window = self.window()
         entry = tk.Entry(window)

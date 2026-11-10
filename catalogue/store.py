@@ -368,6 +368,21 @@ class Catalogue:
                        ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (str(int(details)),)
                 )
 
+    def text_offset(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM ui_preferences WHERE name = 'text_offset'").fetchone()
+        try:
+            return int(row["value"]) if row else 0
+        except ValueError:
+            return 0
+
+    def save_text_offset(self, offset):
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO ui_preferences (name, value) VALUES ('text_offset', ?)
+                   ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (str(offset),)
+            )
+
     def groups_enabled(self):
         with self.connect() as db:
             return db.execute(

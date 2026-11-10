@@ -201,6 +201,7 @@ class Level:
         self.positions = {}
         self.enabled = []
         self.labels = {}
+        self.accelerators = {}
         top = 4
         for index in range((model.index("end") if model.index("end") is not None else -1) + 1):
             kind = model.type(index)
@@ -209,9 +210,14 @@ class Level:
             top += height
             if kind != "separator":
                 self.labels[index] = model.entrycget(index, "label")
+                self.accelerators[index] = model.entrycget(index, "accelerator")
                 if model.entrycget(index, "state") != "disabled":
                     self.enabled.append(index)
-        self.width = max(142, max((popup.face.measure(label) for label in self.labels.values()), default=0) + 61)
+        face = popup.face
+        width = max((face.measure(label) + (face.measure(self.accelerators[i]) + 18
+                                           if self.accelerators[i] else 0)
+                     for i, label in self.labels.items()), default=0)
+        self.width = max(142, width + 61)
         self.height = top + 5
         self.draw()
 
@@ -243,6 +249,9 @@ class Level:
                                     font=self.popup.face)
             self.canvas.create_text(30, middle, anchor="w", text=self.labels[index], fill=color,
                                     underline=int(self.model.entrycget(index, "underline")), font=self.popup.face)
+            if accelerator := self.accelerators[index]:
+                self.canvas.create_text(self.width - 18, middle, anchor="e", text=accelerator,
+                                        fill=MUTED, font=self.popup.face)
             if kind == "cascade":
                 self.canvas.create_text(self.width-18, middle, text="›", fill=GOLD if index in self.enabled else color,
                                         font=self.popup.face)

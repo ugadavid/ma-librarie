@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from collections import Counter
 from datetime import datetime
-from tkinter import font, ttk
+from tkinter import ttk
 
 from .dialogs import FIELD_COLORS, NightWindow
 from .duplicates import Cancelled, ISSUE_LABELS, find_duplicates
@@ -52,10 +52,8 @@ class DuplicateWindow(NightWindow):
         ):
             self.table.heading(column, text=title)
             self.table.column(column, width=width, minwidth=minimum, stretch=False)
-        self.row_font = font.nametofont("TkDefaultFont")
-        self.group_font = self.row_font.copy()
-        self.group_font.configure(weight="bold")
-        self.table.tag_configure("group", font=self.group_font)
+        self.row_font = app.text_fonts["TkDefaultFont"]
+        self.table.tag_configure("group", font=app.text_fonts["bold"])
         self.table.bind("<Button-3>", self.show_file_menu)
         self.table.bind("<<TreeviewSelect>>", self.show_path)
         self.path = tk.StringVar(self)

@@ -1,6 +1,6 @@
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font, ttk
 
 try:
     from PIL import Image, ImageOps, ImageTk
@@ -18,6 +18,41 @@ GOLD = "#d2a35d"
 LINE = "#785b38"
 TEAL = "#58e2cf"
 ART = Path(__file__).with_name("art")
+
+
+TEXT_MIN, TEXT_MAX = -2, 3
+
+
+class TextFonts:
+    def __init__(self, window):
+        self.style = ttk.Style(window)
+        self.faces = {}
+        for name in ("TkDefaultFont", "TkTextFont", "TkFixedFont", "TkMenuFont", "TkHeadingFont"):
+            face = font.nametofont(name, root=window)
+            self.faces[name] = (face, face.cget("size"))
+        for name, family, size in (("NightTitle", "Georgia", 15), ("NightDoor", "Segoe UI", 15),
+                                   ("NightHero", "Georgia", 25), ("NightDetail", "Segoe UI", 12)):
+            face = font.Font(root=window, name=name, family=family, size=size, weight="bold")
+            self.faces[name] = (face, size)
+        face = font.nametofont("TkDefaultFont", root=window).copy()
+        face.configure(weight="bold")
+        self.faces["bold"] = (face, face.cget("size"))
+        self.door_footer_height = self.max_line("NightDoor") + 22
+
+    def __getitem__(self, name):
+        return self.faces[name][0]
+
+    def max_line(self, name):
+        face, size = self.faces[name]
+        sample = face.copy()
+        sample.configure(size=size + TEXT_MAX if size > 0 else size - TEXT_MAX)
+        return sample.metrics("linespace")
+
+    def apply(self, offset):
+        for face, size in self.faces.values():
+            face.configure(size=size + offset if size > 0 else size - offset)
+        self.style.configure("Treeview", rowheight=max(25 + 2 * offset,
+                                                      self["TkDefaultFont"].metrics("linespace") + 6))
 
 
 def use_theme(window):
@@ -40,10 +75,13 @@ def use_theme(window):
     style.configure("Treeview.Heading", background=CARD, foreground=TEXT, padding=(5, 4))
     style.map("Treeview.Heading", background=[("active", SELECTED)])
     style.configure("TLabelframe.Label", foreground=GOLD)
-    style.configure("Night.Title.TLabel", font=("Georgia", 15, "bold"), foreground=TEXT)
+    style.configure("Night.Title.TLabel", font="NightTitle", foreground=TEXT)
     style.configure("Night.Note.TLabel", foreground=GOLD)
-    style.configure("Night.Door.TButton", font=("Segoe UI", 15, "bold"), anchor="w", padding=(13, 8))
+    style.configure("Night.Door.TButton", font="NightDoor", anchor="w", padding=(13, 8))
     style.configure("Night.Primary.TButton", background=SELECTED)
+    if not hasattr(window, "text_fonts"):
+        window.text_fonts = TextFonts(window)
+    return window.text_fonts
 
 
 class Art(tk.Canvas):
@@ -94,16 +132,19 @@ class Art(tk.Canvas):
 class Home(ttk.Frame):
     def __init__(self, parent, navigate):
         super().__init__(parent, padding=10)
-        hero = ttk.Frame(self)
+        faces = parent.winfo_toplevel().text_fonts
+        hero = ttk.Frame(self, height=64 + faces.max_line("NightHero") + faces.max_line("TkDefaultFont"))
         hero.pack(fill="x", pady=(0, 12))
+        hero.grid_propagate(False)
+        hero.rowconfigure(0, weight=1)
         for column in (0, 2):
             hero.columnconfigure(column, weight=1, uniform="sides")
-        Art(hero, "home-left", height=121).grid(row=0, column=0, sticky="nsew")
-        Art(hero, "home-right", height=121).grid(row=0, column=2, sticky="nsew")
+        Art(hero, "home-left", height=121).grid(row=0, column=0, sticky="ew")
+        Art(hero, "home-right", height=121).grid(row=0, column=2, sticky="ew")
         identity = ttk.Frame(hero, padding=(14, 2))
         identity.grid(row=0, column=1)
         Art(identity, "emblem", width=62, height=50).pack()
-        ttk.Label(identity, text="Ma Médiathèque", font=("Georgia", 25, "bold")).pack(pady=(4, 2))
+        ttk.Label(identity, text="Ma Médiathèque", font="NightHero").pack(pady=(4, 2))
         ttk.Label(identity, text="A R C H I V E S   N O C T U R N E S", style="Night.Note.TLabel").pack()
         doors = ttk.Frame(self)
         doors.pack(fill="both", expand=True)
@@ -114,12 +155,15 @@ class Home(ttk.Frame):
             doors.columnconfigure(column, weight=1, uniform="doors")
             edge = tk.Frame(doors, background=GOLD, padx=1, pady=1)
             edge.grid(row=0, column=column, sticky="nsew", padx=5)
+            edge.columnconfigure(0, weight=1)
+            edge.rowconfigure(0, weight=1)
+            edge.rowconfigure(1, minsize=faces.door_footer_height)
             scene = Art(edge, f"door-{library}")
-            scene.pack(fill="both", expand=True)
+            scene.grid(row=0, column=0, sticky="nsew")
             scene.configure(cursor="hand2")
             button = ttk.Button(edge, text=f"{title}   ›", style="Night.Door.TButton",
                                 command=lambda key=library: navigate(key))
-            button.pack(fill="x")
+            button.grid(row=1, column=0, sticky="nsew")
             button.bind("<Return>", lambda _event, control=button: control.invoke())
             scene.bind("<Button-1>", lambda _event, control=button: control.invoke())
             self.buttons[library] = button
