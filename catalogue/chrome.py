@@ -47,7 +47,7 @@ def tint_title(window):
 
 
 class MenuBar(ttk.Frame):
-    def __init__(self, parent, window, entries):
+    def __init__(self, parent, window, entries, *, underlines=None):
         super().__init__(parent, padding=(0, 0, 0, 1))
         self.window = window
         self.buttons = {}
@@ -68,8 +68,10 @@ class MenuBar(ttk.Frame):
         if hasattr(window, "text_fonts"):
             row.configure(height=window.text_fonts.max_line("TkDefaultFont") + 16)
             row.pack_propagate(False)
+        underlines = underlines or {}
         for label, menu in entries:
-            button = ttk.Button(row, text=label, underline=0, style="Night.Menu.TButton",
+            underline = underlines.get(label, 0)
+            button = ttk.Button(row, text=label, underline=underline, style="Night.Menu.TButton",
                                 command=lambda m=menu, key=label: self.post(key, m))
             self.buttons[label] = button
             button.pack(side="left", fill="y")
@@ -77,7 +79,7 @@ class MenuBar(ttk.Frame):
             button.bind("<Left>", lambda _event, key=label: self.step(key, -1))
             button.bind("<Right>", lambda _event, key=label: self.step(key, 1))
             button.bind("<Escape>", self.cancel)
-            self.bind_key(f"<Alt-KeyPress-{label[0].lower()}>",
+            self.bind_key(f"<Alt-KeyPress-{label[underline].lower()}>",
                           lambda _event, b=button: self.invoke(b))
         self.bind_key("<F10>", self.focus_menu)
         tk.Frame(self, height=1, background=LINE).pack(fill="x")

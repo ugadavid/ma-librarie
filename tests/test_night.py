@@ -4,7 +4,9 @@ import tempfile
 import tkinter as tk
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from catalogue.help_view import AboutDialog, HelpDialog, SHORTCUTS_TITLE
 from catalogue.night import Art
 from catalogue.store import Catalogue
 from catalogue.tag_dialog import TagDialog
@@ -83,6 +85,42 @@ class NightTests(unittest.TestCase):
         self.assertIn("Aucun résultat", reopened.context_status.get())
         reopened.display_menu.invoke("Taille du texte par défaut")
         self.assertEqual(0, db.text_offset())
+
+    def test_help_reuses_shortcuts_and_links_to_the_project(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        window = self.window()
+        app = App(window, Catalogue(Path(temporary.name) / "catalogue.sqlite3"))
+        window.update()
+        app.search_entry.focus_force()
+        window.update()
+        views = []
+
+        def capture():
+            dialog = next(child for child in app.winfo_children() if isinstance(child, HelpDialog))
+            try:
+                text = dialog.focus_get()
+                views.append((text.cget("state"), text.get("1.0", "end-1c")))
+            finally:
+                dialog.destroy()
+
+        for label in ("Documentation", SHORTCUTS_TITLE):
+            window.after(30, capture)
+            app.help_menu.invoke(label)
+        (doc_state, document), (shortcut_state, shortcuts) = views
+        self.assertEqual(("disabled", "disabled"), (doc_state, shortcut_state))
+        self.assertEqual(shortcuts, document.split(SHORTCUTS_TITLE + "\n", 1)[1])
+        self.assertIn("Ctrl+à sans Maj sur la touche 0/à", shortcuts)
+
+        def follow_link():
+            dialog = next(child for child in app.winfo_children() if isinstance(child, AboutDialog))
+            dialog.open_project()
+            dialog.destroy()
+
+        with patch("catalogue.help_view.os.startfile") as browser:
+            window.after(30, follow_link)
+            app.help_menu.invoke("À propos de Ma Médiathèque")
+        browser.assert_called_once_with("https://github.com/ugadavid/ma-librarie")
 
     def test_tag_counts_scroll_cancel_apply_and_focus(self):
         window = self.window()

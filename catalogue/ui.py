@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from tkinter import filedialog, ttk
 
+from . import APP_NAME
 from . import dialogs as messagebox, dialogs as simpledialog
 from .dialogs import FIELD_COLORS, NightWindow
 
@@ -15,6 +16,7 @@ from .backups import CatalogueSession, prepare_restore, restore_backup, save_bac
 from .book_metadata import BOOK_EXTENSIONS
 from .detail_pane import DetailPane
 from .duplicate_view import DuplicateWindow
+from .help_view import AboutDialog, HelpDialog
 from .mosaic import Mosaic
 from .chrome import MenuBar, tint_title
 from .night import Art, Home, TEAL, TEXT_MAX, TEXT_MIN, use_theme
@@ -344,11 +346,17 @@ class App(ttk.Frame):
         self.library_menu = NightMenu(self, tearoff=False)
         self.search_menu = NightMenu(self, tearoff=False)
         self.display_menu = NightMenu(self, tearoff=False)
+        self.help_menu = NightMenu(self, tearoff=False)
         self.menubar = MenuBar(self, self.window, (
             ("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
-            ("Recherche", self.search_menu), ("Affichage", self.display_menu),
-        ))
+            ("Recherche", self.search_menu), ("Affichage", self.display_menu), ("Aide", self.help_menu),
+        ), underlines={"Aide": 1})
         self.menubar.pack(fill="x", before=self.workspace, pady=(0, 7))
+        self.help_menu.add_command(label="Documentation", underline=0,
+                                   command=lambda: HelpDialog(self, documentation=True))
+        self.help_menu.add_command(label="Raccourcis clavier", underline=0, command=lambda: HelpDialog(self))
+        self.help_menu.add_command(label=f"À propos de {APP_NAME}", underline=2,
+                                   command=lambda: AboutDialog(self))
 
         self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
         self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
@@ -1783,7 +1791,7 @@ def main():
         raise SystemExit("Ma Librarie nécessite Windows.")
     window = tk.Tk()
     use_theme(window)
-    window.title("Ma Médiathèque")
+    window.title(APP_NAME)
     window.geometry("1130x680")
     window.minsize(850, 480)
     session = None

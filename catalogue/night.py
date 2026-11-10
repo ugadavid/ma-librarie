@@ -2,6 +2,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import font, ttk
 
+from . import APP_NAME
+
 try:
     from PIL import Image, ImageOps, ImageTk
 except ImportError:
@@ -144,7 +146,7 @@ class Home(ttk.Frame):
         identity = ttk.Frame(hero, padding=(14, 2))
         identity.grid(row=0, column=1)
         Art(identity, "emblem", width=62, height=50).pack()
-        ttk.Label(identity, text="Ma Médiathèque", font="NightHero").pack(pady=(4, 2))
+        ttk.Label(identity, text=APP_NAME, font="NightHero").pack(pady=(4, 2))
         ttk.Label(identity, text="A R C H I V E S   N O C T U R N E S", style="Night.Note.TLabel").pack()
         doors = ttk.Frame(self)
         doors.pack(fill="both", expand=True)
