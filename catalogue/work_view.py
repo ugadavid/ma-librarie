@@ -2,36 +2,38 @@ from collections import Counter
 import tkinter as tk
 from tkinter import ttk
 
+from .localized import Button, Checkbutton, Label, LabelFrame, Treeview, tr
+from .i18n import join, msg, plural
 from . import dialogs as messagebox, dialogs as simpledialog
 from .dialogs import FIELD_COLORS
 from .night import INK
 
 
 def format_counts(members):
-    return sorted(Counter(row["extension"].upper() or "Sans extension" for row in members).items())
+    return sorted(Counter(row["extension"].upper() or msg("sans_extension") for row in members).items())
 
 
 def format_label(name, count):
-    return f"{name} ×{count}" if count > 1 else name
+    return join("", (name, f" ×{count}")) if count > 1 else name
 
 
-class FormatFiles(ttk.LabelFrame):
+class FormatFiles(LabelFrame):
     def __init__(self, parent, file_state, file_menu, *, close=None):
-        super().__init__(parent, text="Formats et emplacements", padding=5)
+        super().__init__(parent, text=msg("formats_et_emplacements"), padding=5)
         self.file_state = file_state
         self.file_menu = file_menu
         self.rows = {}
         self.content = None
         if close:
-            ttk.Button(self, text="Refermer", command=close).pack(anchor="e")
+            Button(self, text=msg("refermer"), command=close).pack(anchor="e")
         panel = ttk.Frame(self)
         panel.pack(fill="both", expand=True)
-        self.table = ttk.Treeview(
+        self.table = Treeview(
             panel, columns=("name", "format", "state", "path"), show="headings", selectmode="browse", height=3
         )
         for column, label, width in (
-            ("name", "Nom", 156), ("format", "Format", 65),
-            ("state", "État", 112), ("path", "Chemin", 455),
+            ("name", msg("nom"), 156), ("format", msg("format"), 65),
+            ("state", msg("etat"), 112), ("path", msg("chemin"), 455),
         ):
             self.table.heading(column, text=label)
             self.table.column(column, width=width, stretch=column == "path")
@@ -45,7 +47,7 @@ class FormatFiles(ttk.LabelFrame):
         panel.rowconfigure(0, weight=1)
         self.table.bind("<Button-3>", self.context)
 
-    def show(self, rows, title="Formats et emplacements"):
+    def show(self, rows, title=msg("formats_et_emplacements")):
         files = tuple((row, self.file_state(row)) for row in rows)
         content = files, title
         if content == self.content:
@@ -72,11 +74,11 @@ class ProposalDialog(simpledialog.Dialog):
         self.work_title = title
         self.candidates = candidates
         self.options = []
-        super().__init__(parent, "Proposer un regroupement")
+        super().__init__(parent, msg("proposer_un_regroupement_2"))
 
     def body(self, panel):
-        ttk.Label(panel, text=self.work_title, wraplength=690).pack(anchor="w", padx=6)
-        ttk.Label(panel, text="Cochez les fichiers à regrouper.").pack(anchor="w", padx=6, pady=(0, 6))
+        Label(panel, text=self.work_title, wraplength=690).pack(anchor="w", padx=6)
+        Label(panel, text=msg("cochez_les_fichiers_a_regrouper")).pack(anchor="w", padx=6, pady=(0, 6))
         frame = ttk.Frame(panel)
         frame.pack(fill="both", expand=True)
         canvas = tk.Canvas(frame, width=710, height=min(310, len(self.candidates) * 29 + 8),
@@ -96,14 +98,14 @@ class ProposalDialog(simpledialog.Dialog):
         for row in self.candidates:
             enabled = tk.BooleanVar(self, value=True)
             self.options.append((row, enabled))
-            ttk.Checkbutton(
+            Checkbutton(
                 choices, variable=enabled, text=f'{row["extension"].upper()}  ·  {row["full_path"]}'
             ).pack(anchor="w", pady=2)
 
     def validate(self):
         chosen = [row for row, enabled in self.options if enabled.get()]
         if len({row["extension"] for row in chosen}) < 2:
-            messagebox.showerror("Regroupement", "Choisissez au moins deux formats.", parent=self)
+            messagebox.showerror(msg("regroupement"), msg("choisissez_au_moins_deux_formats"), parent=self)
             return False
         self.result = chosen
         return True
@@ -122,7 +124,8 @@ class WorkPicker(simpledialog.Dialog):
         self.options.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         for work in self.works:
-            self.options.insert("end", f'{work["title"]}  ·  {work["members"]} fichier(s)  ·  n° {work["id"]}')
+            label = join("  ·  ", (work["title"], plural("file_count", work["members"]), f'#{work["id"]}'))
+            self.options.insert("end", tr(self, label))
         self.options.selection_set(0)
         self.options.bind("<Double-1>", self.ok)
         return self.options

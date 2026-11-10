@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .i18n import error_text, join, msg
 from .book_metadata import BOOK_EXTENSIONS, EMPTY, MetadataError, book_metadata, companion_metadata, normalized
 from .windows import SourceProblem, is_reparse, locate, verify
 
@@ -115,30 +116,30 @@ SCHEMA = SCHEMA_V2 + WORK_SCHEMA
 
 UNCLASSIFIED = "unclassified"
 LIBRARIES = {
-    "books": ("Livres", "Tous les livres"),
-    "movies": ("Films", "Tous les films"),
-    "music": ("Musiques", "Toutes les musiques"),
-    UNCLASSIFIED: ("À classer", "Toutes les collections à classer"),
+    "books": (msg("livres"), msg("tous_les_livres")),
+    "movies": (msg("films"), msg("tous_les_films")),
+    "music": (msg("musiques"), msg("toutes_les_musiques")),
+    UNCLASSIFIED: (msg("a_classer"), msg("toutes_les_collections_a_classer")),
 }
 STATES = {
-    "new": "À synchroniser",
-    "available": "Disponible",
-    "partial": "Inventaire partiel",
-    "offline": "Hors ligne",
-    "relocate": "À relocaliser",
-    "error": "Accès impossible",
-    "missing": "Absent",
+    "new": msg("a_synchroniser"),
+    "available": msg("disponible"),
+    "partial": msg("inventaire_partiel"),
+    "offline": msg("hors_ligne"),
+    "relocate": msg("a_relocaliser"),
+    "error": msg("acces_impossible"),
+    "missing": msg("absent"),
 }
 SORTS = {
-    "Nom": "fold(name)",
-    "Collections": "fold(collection_names)",
-    "Extension": "fold(extension)",
-    "Taille": "size",
-    "Modification": "modified",
-    "Première détection": "detected",
-    "État": "state_order(CASE WHEN root_state IN ('available', 'partial') THEN state ELSE root_state END)",
+    msg("nom"): "fold(name)",
+    msg("collections"): "fold(collection_names)",
+    msg("extension"): "fold(extension)",
+    msg("taille"): "size",
+    msg("modification"): "modified",
+    msg("premiere_detection"): "detected",
+    msg("etat"): "state_order(CASE WHEN root_state IN ('available', 'partial') THEN state ELSE root_state END)",
 }
-DEFAULT_DESCENDING = {"Taille", "Modification", "Première détection"}
+DEFAULT_DESCENDING = {msg("taille"), msg("modification"), msg("premiere_detection")}
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,8 @@ class Scan:
 
     def fail(self, relative, error):
         self.blocked.add(relative)
-        self.errors.append(f"{relative or '.'} — {error}")
+        diagnostic = error_text(error) if isinstance(error, Exception) else error
+        self.errors.append(join(" — ", (relative or ".", diagnostic)))
 
     def is_blocked(self, relative):
         while relative and relative not in self.blocked:
@@ -242,7 +244,7 @@ def inventory(source, previous, on_examined=None):
                 try:
                     companion, matched = companion_metadata(Path(sidecars[0].path), books)
                 except (OSError, MetadataError) as exc:
-                    result.errors.append(f"{os.path.join(relative, sidecars[0].name)} — {exc}")
+                    result.errors.append(join(" — ", (os.path.join(relative, sidecars[0].name), error_text(exc))))
                     companion = None
 
             for child, key, info, extension in files:
@@ -320,7 +322,7 @@ class Catalogue:
             try:
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
-                raise OSError("Catalogue occupé. Attendez la fin de l’opération en cours ou réessayez.") from exc
+                raise OSError(msg("catalogue_occupe_attendez_la_fin_de_loperation")) from exc
             try:
                 yield
             finally:
@@ -330,7 +332,7 @@ class Catalogue:
     def collection_name(name):
         name = name.strip()
         if not name:
-            raise ValueError("Donnez un nom à la collection.")
+            raise ValueError(msg("donnez_un_nom_a_la_collection"))
         return name
 
     @staticmethod
@@ -367,6 +369,18 @@ class Catalogue:
                     """INSERT INTO ui_preferences (name, value) VALUES ('details_visible', ?)
                        ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (str(int(details)),)
                 )
+
+    def ui_language(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM ui_preferences WHERE name = 'language'").fetchone()
+        return row["value"] if row else "fr"
+
+    def save_ui_language(self, language):
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO ui_preferences (name, value) VALUES ('language', ?)
+                   ON CONFLICT (name) DO UPDATE SET value = excluded.value""", (language,)
+            )
 
     def text_offset(self):
         with self.connect() as db:
@@ -429,13 +443,13 @@ class Catalogue:
     def move_collection(self, collection, library):
         with self.mutation(), self.connect() as db:
             if not db.execute("SELECT 1 FROM collections WHERE id = ?", (collection,)).fetchone():
-                raise ValueError("Cette collection n’existe plus.")
+                raise ValueError(msg("cette_collection_nexiste_plus"))
             self.assign_library(db, collection, library)
 
     @staticmethod
     def assign_library(db, collection, library):
         if library not in LIBRARIES:
-            raise ValueError("Bibliothèque inconnue.")
+            raise ValueError(msg("bibliotheque_inconnue"))
         if library == UNCLASSIFIED:
             db.execute("DELETE FROM collection_libraries WHERE collection_id = ?", (collection,))
         else:
@@ -450,7 +464,7 @@ class Catalogue:
         with self.mutation(), self.connect() as db:
             updated = db.execute("UPDATE collections SET name = ? WHERE id = ?", (name, collection))
             if not updated.rowcount:
-                raise ValueError("Cette collection n’existe plus.")
+                raise ValueError(msg("cette_collection_nexiste_plus"))
 
     def delete_collection(self, collection):
         with self.mutation(), self.connect() as db:
@@ -459,7 +473,7 @@ class Catalogue:
             db.execute("DELETE FROM roots WHERE collection_id = ?", (collection,))
             deleted = db.execute("DELETE FROM collections WHERE id = ?", (collection,))
             if not deleted.rowcount:
-                raise ValueError("Cette collection n’existe plus.")
+                raise ValueError(msg("cette_collection_nexiste_plus"))
 
     def remove_root(self, collection, root_id):
         with self.mutation(), self.connect() as db:
@@ -469,7 +483,7 @@ class Catalogue:
             ).fetchall()
             removed = next((root for root in roots if root["id"] == root_id), None)
             if removed is None:
-                raise ValueError("Cette racine n’existe plus.")
+                raise ValueError(msg("cette_racine_nexiste_plus"))
             removed_parts = Path(removed["relative"]).parts
             for other in roots:
                 if other["id"] == root_id or other["volume"] != removed["volume"]:
@@ -526,7 +540,7 @@ class Catalogue:
         source = locate(folder)
         data = locate(self.filename.parent)
         if source.volume == data.volume and Path(data.relative).is_relative_to(source.relative):
-            raise ValueError("Ce dossier contient les données de l’application. Choisissez un sous-dossier.")
+            raise ValueError(msg("ce_dossier_contient_les_donnees_de_lapplication"))
         with self.mutation(), self.connect() as db:
             root_id = self.next_id(db, "roots")
             db.execute(
@@ -548,7 +562,7 @@ class Catalogue:
                 (str(source.path), revision, root["id"], root["revision"]),
             )
             if not updated.rowcount:
-                raise ValueError("La source a changé dans une autre instance. Actualisez la vue.")
+                raise ValueError(msg("la_source_a_change_dans_une_autre_instance"))
 
     def directories(self, root_id, parent):
         with self.connect() as db:
@@ -663,7 +677,7 @@ class Catalogue:
     def tag_name(name):
         name = name.strip()
         if not name:
-            raise ValueError("Donnez un nom au tag.")
+            raise ValueError(msg("donnez_un_nom_au_tag"))
         return name, name.casefold()
 
     @staticmethod
@@ -673,7 +687,7 @@ class Catalogue:
             "SELECT id FROM tags WHERE library = ? AND name_key = ?", (library, key)
         ).fetchone()
         if existing is not None and existing[0] != tag:
-            raise ValueError("Ce nom de tag existe déjà dans cette bibliothèque.")
+            raise ValueError(msg("ce_nom_de_tag_existe_deja_dans_cette"))
         if tag is None:
             return db.execute(
                 "INSERT INTO tags (library, name, name_key) VALUES (?, ?, ?)", (library, label, key)
@@ -716,7 +730,7 @@ class Catalogue:
         with self.mutation(), self.connect() as db:
             tags = {row[0] for row in db.execute("SELECT id FROM tags WHERE library = ?", (library,))}
             if changes.keys() - tags:
-                raise ValueError("Un tag a changé dans une autre fenêtre. Rouvrez le dialogue.")
+                raise ValueError(msg("un_tag_a_change_dans_une_autre_fenetre_rouvrez"))
             changes = dict(changes)
             for name in new_names:
                 changes[self.write_tag(db, library, name)] = True
@@ -782,7 +796,7 @@ class Catalogue:
                    FROM works WHERE id = ?""", (work_id,)
             ).fetchone()
             if row is None:
-                raise ValueError("Un ouvrage a changé dans une autre fenêtre.")
+                raise ValueError(msg("un_ouvrage_a_change_dans_une_autre_fenetre"))
             result.append((work_id, *row))
         return tuple(result)
 
@@ -794,7 +808,7 @@ class Catalogue:
     def combine_work(self, title, locations, work_ids, target, preview):
         with self.mutation(), self.connect() as db:
             if self.work_scope(db, locations, work_ids) != preview:
-                raise ValueError("Le regroupement a changé dans une autre fenêtre. Réessayez.")
+                raise ValueError(msg("le_regroupement_a_change_dans_une_autre_fenetre"))
             for volume, path in locations:
                 if not db.execute(
                     """SELECT 1 FROM entries JOIN roots ON roots.id = root_id
@@ -802,12 +816,12 @@ class Catalogue:
                        WHERE library = 'books' AND volume = ? AND volume_path = ? AND kind = 'file'""",
                     (volume, path),
                 ).fetchone():
-                    raise ValueError("Un fichier ne figure plus dans la bibliothèque Livres.")
+                    raise ValueError(msg("un_fichier_ne_figure_plus_dans_la_bibliotheque"))
             if target is None:
                 target = preview[0][0] if preview else None
             if target is None:
                 if len(locations) < 2:
-                    raise ValueError("Choisissez au moins deux fichiers.")
+                    raise ValueError(msg("choisissez_au_moins_deux_fichiers"))
                 target = db.execute("INSERT INTO works (title) VALUES (?)", (title,)).lastrowid
             for work_id, _, _ in preview:
                 if work_id != target:
@@ -844,10 +858,10 @@ class Catalogue:
     def classify_work(self, work_id, changes, new_names):
         with self.mutation(), self.connect() as db:
             if not db.execute("SELECT 1 FROM works WHERE id = ?", (work_id,)).fetchone():
-                raise ValueError("Cet ouvrage a changé dans une autre fenêtre.")
+                raise ValueError(msg("cet_ouvrage_a_change_dans_une_autre_fenetre"))
             tags = {row[0] for row in db.execute("SELECT id FROM tags WHERE library = 'books'")}
             if changes.keys() - tags:
-                raise ValueError("Un tag a changé dans une autre fenêtre. Rouvrez le dialogue.")
+                raise ValueError(msg("un_tag_a_change_dans_une_autre_fenetre_rouvrez"))
             changes = dict(changes)
             for name in new_names:
                 changes[self.write_tag(db, "books", name)] = True
@@ -856,7 +870,7 @@ class Catalogue:
                        if apply else "DELETE FROM work_tags WHERE work_id = ? AND tag_id = ?")
                 db.execute(sql, (work_id, tag))
 
-    def search(self, collection, query="", extension=None, sort="Nom", scope=None,
+    def search(self, collection, query="", extension=None, sort=msg("nom"), scope=None,
                limit=200, offset=0, *, descending=None, library=None, shelf=None, locations=None, grouped=False, metadata=None):
         terms = query.casefold().split()
         filters = [
@@ -958,7 +972,7 @@ class Catalogue:
 
     @staticmethod
     def grouped_search_tail(sort, direction):
-        order = "fold(coalesce(work_title, name))" if sort == "Nom" else SORTS[sort]
+        order = "fold(coalesce(work_title, name))" if sort == msg("nom") else SORTS[sort]
         partition = """PARTITION BY work_id,
                        CASE WHEN work_id IS NULL THEN volume END,
                        CASE WHEN work_id IS NULL THEN volume_path END"""
@@ -1001,7 +1015,7 @@ class Catalogue:
             if root_id is not None:
                 roots = [root for root in roots if root["id"] == root_id]
                 if not roots:
-                    raise ValueError("Cette racine n’existe plus dans la collection.")
+                    raise ValueError(msg("cette_racine_nexiste_plus_dans_la_collection"))
             return self.scan_collection(collection, roots, progress, on_progress)
 
     def scan_collection(self, collection, roots, progress, on_progress):
@@ -1030,7 +1044,7 @@ class Catalogue:
             except SourceProblem as exc:
                 scan = None
                 state = exc.state
-                errors = [str(exc)]
+                errors = [error_text(exc)]
 
             baseline = has_baseline(root, bool(previous))
             compared = baseline and state == "available"
@@ -1042,7 +1056,7 @@ class Catalogue:
                     (state, revision, root["id"], root["revision"]),
                 )
                 if not updated.rowcount:
-                    summary.errors.append(f"{root['path']} — Source modifiée. Relancez la synchronisation.")
+                    summary.errors.append(msg("scan_source_changed", path=root["path"]))
                     continue
                 if scan is not None and state != "error":
                     self.apply_scan(db, root, scan, previous, now, summary, compared)

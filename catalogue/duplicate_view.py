@@ -5,6 +5,8 @@ from collections import Counter
 from datetime import datetime
 from tkinter import ttk
 
+from .localized import Button, Label, ReadOnlyText
+from .i18n import error_text, join, msg, plural
 from .dialogs import FIELD_COLORS, NightWindow
 from .duplicates import Cancelled, ISSUE_LABELS, find_duplicates
 
@@ -13,7 +15,7 @@ class DuplicateWindow(NightWindow):
     def __init__(self, app, collection, extension, scope, library, label, *, shelf=None, locations=None):
         super().__init__(app.window)
         self.app = app
-        self.title("Doublons exacts")
+        self.title(msg("doublons_exacts"))
         self.transient(app.window)
         self.geometry("1120x580")
         self.minsize(760, 400)
@@ -29,26 +31,26 @@ class DuplicateWindow(NightWindow):
 
         panel = ttk.Frame(self, padding=12)
         panel.pack(fill="both", expand=True)
-        ttk.Label(panel, text=f"Périmètre : {label}", wraplength=1050).pack(anchor="w")
-        formats = ("Toutes les extensions" if extension is None else
-                   ", ".join(f".{ext}" if ext else "sans extension" for ext in sorted(extension))
-                   or "Aucune extension")
-        ttk.Label(panel, text=f"Extensions : {formats}", wraplength=1050).pack(anchor="w")
-        self.status = ttk.Label(panel, text="Préparation de la vérification…", wraplength=1050)
+        Label(panel, text=msg("duplicates_scope", scope=label), wraplength=1050).pack(anchor="w")
+        formats = (msg("toutes_les_extensions") if extension is None else
+                   join(", ", (f".{ext}" if ext else msg("sans_extension") for ext in sorted(extension)))
+                   or msg("aucune_extension"))
+        Label(panel, text=msg("label_value", label=msg("extensions"), value=formats), wraplength=1050).pack(anchor="w")
+        self.status = Label(panel, text=msg("preparation_de_la_verification"), wraplength=1050)
         self.status.pack(anchor="w", pady=(8, 3))
-        self.summary = ttk.Label(panel, wraplength=1050)
+        self.summary = Label(panel, wraplength=1050)
         self.summary.pack(anchor="w", pady=(0, 4))
         self.bar = ttk.Progressbar(panel, mode="indeterminate")
         self.bar.pack(fill="x", pady=(0, 8))
         self.bar.start()
 
         self.table = app.scroll_tree(panel, columns=("path", "size", "collections"), show="tree headings")
-        self.table.heading("#0", text="Groupe / copie")
+        self.table.heading("#0", text=msg("groupe_copie"))
         self.table.column("#0", width=300, minwidth=210, stretch=False)
         for column, title, width, minimum in (
-            ("path", "Chemin complet", 500, 390),
-            ("size", "Taille (o)", 95, 85),
-            ("collections", "Collections", 180, 135),
+            ("path", msg("chemin_complet"), 500, 390),
+            ("size", msg("taille_o"), 95, 85),
+            ("collections", msg("collections"), 180, 135),
         ):
             self.table.heading(column, text=title)
             self.table.column(column, width=width, minwidth=minimum, stretch=False)
@@ -57,17 +59,17 @@ class DuplicateWindow(NightWindow):
         self.table.bind("<Button-3>", self.show_file_menu)
         self.table.bind("<<TreeviewSelect>>", self.show_path)
         self.path = tk.StringVar(self)
-        ttk.Label(panel, text="Chemin de la copie sélectionnée").pack(anchor="w", pady=(7, 0))
+        Label(panel, text=msg("chemin_de_la_copie_selectionnee")).pack(anchor="w", pady=(7, 0))
         ttk.Entry(panel, textvariable=self.path, state="readonly").pack(fill="x")
 
         actions = ttk.Frame(panel)
         actions.pack(fill="x", pady=(8, 0))
-        self.cancel_button = ttk.Button(actions, text="Annuler l’analyse", command=self.cancel)
+        self.cancel_button = Button(actions, text=msg("annuler_lanalyse"), command=self.cancel)
         self.cancel_button.pack(side="left")
-        self.details_button = ttk.Button(actions, text="Voir les anomalies", command=self.show_issues,
+        self.details_button = Button(actions, text=msg("voir_les_anomalies"), command=self.show_issues,
                                          state="disabled")
         self.details_button.pack(side="left", padx=5)
-        ttk.Button(actions, text="Retour à la liste", command=self.request_close).pack(side="right")
+        Button(actions, text=msg("retour_a_la_liste"), command=self.request_close).pack(side="right")
 
         def worker():
             def progress(phase, done, total):
@@ -79,7 +81,7 @@ class DuplicateWindow(NightWindow):
             except Cancelled:
                 self.events.put(("cancelled", None))
             except Exception as exc:
-                self.events.put(("failed", str(exc) or type(exc).__name__))
+                self.events.put(("failed", error_text(exc)))
             else:
                 self.events.put(("done", result))
 
@@ -92,7 +94,7 @@ class DuplicateWindow(NightWindow):
             if event == "progress":
                 if not self.cancelled.is_set():
                     phase, done, total = data
-                    self.status.configure(text=f"{phase} · {done} sur {total}")
+                    self.status.configure(text=msg("duplicate_progress", phase=phase, done=done, total=total))
                 continue
 
             self.running = False
@@ -102,9 +104,9 @@ class DuplicateWindow(NightWindow):
             if self.closing:
                 self.request_close()
             elif self.cancelled.is_set() or event == "cancelled":
-                self.status.configure(text="Analyse annulée. Aucun résultat pour cette vérification.")
+                self.status.configure(text=msg("analyse_annulee_aucun_resultat_pour_cette"))
             elif event == "failed":
-                self.status.configure(text="Vérification incomplète.")
+                self.status.configure(text=msg("verification_incomplete"))
                 self.summary.configure(text=data)
             else:
                 self.show_result(data)
@@ -114,17 +116,19 @@ class DuplicateWindow(NightWindow):
     def show_result(self, result):
         self.issues = result.issues
         counts = Counter(issue.category for issue in self.issues)
-        finished = datetime.now().strftime("%d/%m/%Y à %H:%M:%S")
-        state = "Vérification incomplète" if self.issues else "Vérification terminée"
-        self.status.configure(text=f"{state} le {finished}.")
+        finished = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state = msg("verification_incomplete_2") if self.issues else msg("verification_terminee")
+        self.status.configure(text=msg("duplicate_finished", status=state, time=finished))
         files = sum(map(len, result.groups))
-        issues = " · ".join(f"{label} : {counts[key]}" for key, label in ISSUE_LABELS.items())
-        self.summary.configure(text=f"{len(result.groups)} groupe(s) · {files} fichier(s) concerné(s)\n{issues}")
+        issues = join(" · ", (msg("label_value", label=label, value=counts[key])
+                               for key, label in ISSUE_LABELS.items()))
+        self.summary.configure(text=msg("duplicates_summary", groups=plural("groups_count", len(result.groups)),
+                                        files=plural("affected_files", files), issues=issues))
         if self.issues:
             self.details_button.configure(state="normal")
         path_width = 500
         for copies in result.groups:
-            title = f'Doublon exact · {len(copies)} copies · {copies[0].row["name"]}'
+            title = msg("duplicate_group", count=len(copies), name=copies[0].row["name"])
             group = self.table.insert("", "end", text=title, open=True, tags=("group",))
             for copy in copies:
                 row = copy.row
@@ -145,23 +149,23 @@ class DuplicateWindow(NightWindow):
 
     def show_issues(self):
         window = NightWindow(self)
-        window.title("Anomalies de la vérification")
+        window.title(msg("anomalies_de_la_verification"))
         window.transient(self)
-        text = tk.Text(window, width=100, height=19, wrap="word", **FIELD_COLORS)
+        details = []
+        for issue in self.issues:
+            heading = join(" · ", (ISSUE_LABELS[issue.category], issue.row["full_path"]))
+            details.append(join("\n", (heading, issue.message)))
+        text = ReadOnlyText(window, join("\n\n", details), width=100, height=19, wrap="word", **FIELD_COLORS)
         scroll = ttk.Scrollbar(window, command=text.yview)
         text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         text.pack(side="left", fill="both", expand=True)
-        for issue in self.issues:
-            text.insert("end", f'{ISSUE_LABELS[issue.category]} · {issue.row["full_path"]}\n'
-                               f'{issue.message}\n\n')
-        text.configure(state="disabled")
 
     def cancel(self):
         if self.running:
             self.cancelled.set()
             self.cancel_button.configure(state="disabled")
-            self.status.configure(text="Annulation en cours…")
+            self.status.configure(text=msg("annulation_en_cours"))
 
     def request_close(self):
         if self.running:

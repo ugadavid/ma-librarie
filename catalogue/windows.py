@@ -4,6 +4,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 from ctypes import wintypes
+from .i18n import msg
 
 
 class SourceProblem(OSError):
@@ -32,15 +33,15 @@ def locate(folder):
     try:
         path = Path(folder).resolve(strict=True)
         if not stat.S_ISDIR(path.stat().st_mode):
-            raise SourceProblem("offline", "Le dossier source est introuvable.")
+            raise SourceProblem("offline", msg("le_dossier_source_est_introuvable"))
     except FileNotFoundError as exc:
-        raise SourceProblem("offline", "Le dossier source est introuvable.") from exc
+        raise SourceProblem("offline", msg("le_dossier_source_est_introuvable")) from exc
     except SourceProblem:
         raise
     except OSError as exc:
         # Disconnected media may report device/drive errors instead of ENOENT.
         if getattr(exc, "winerror", None) in (3, 15, 21, 55, 1167):
-            raise SourceProblem("offline", "Le volume est indisponible.") from exc
+            raise SourceProblem("offline", msg("le_volume_est_indisponible")) from exc
         raise SourceProblem("error", str(exc)) from exc
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -54,7 +55,7 @@ def locate(folder):
         call.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
         call.restype = wintypes.BOOL
         if not call(source, result, len(result)):
-            raise SourceProblem("relocate", "Volume non identifiable. Relocalisez la source.")
+            raise SourceProblem("relocate", msg("volume_non_identifiable_relocalisez_la_source"))
     return Location(path, volume.value.lower(), os.path.relpath(path, mount.value))
 
 
@@ -73,12 +74,12 @@ def verify(folder, volume, relative):
                     continue
                 if ancestor.volume != volume:
                     raise SourceProblem(
-                        "relocate", "Le volume a changé. Relocalisez le dossier d’origine."
+                        "relocate", msg("le_volume_a_change_relocalisez_le_dossier")
                     ) from exc
                 break
         raise
     if (current.volume, current.relative) != (volume, relative):
-        raise SourceProblem("relocate", "La source a changé. Relocalisez le dossier d’origine.")
+        raise SourceProblem("relocate", msg("la_source_a_change_relocalisez_le_dossier"))
     return current
 
 
@@ -91,11 +92,11 @@ def verified_file(folder, volume, relative, file_relative):
             target /= part
             info = target.lstat()
             if is_reparse(info):
-                raise SourceProblem("error", "Le chemin passe désormais par un lien.")
+                raise SourceProblem("error", msg("le_chemin_passe_desormais_par_un_lien"))
     except (FileNotFoundError, NotADirectoryError) as exc:
-        raise SourceProblem("missing", "Le fichier a disparu depuis le dernier inventaire.") from exc
+        raise SourceProblem("missing", msg("le_fichier_a_disparu_depuis_le_dernier")) from exc
     if not stat.S_ISREG(info.st_mode):
-        raise SourceProblem("missing", "Le chemin ne désigne plus un fichier.")
+        raise SourceProblem("missing", msg("le_chemin_ne_designe_plus_un_fichier"))
     return source, target, info
 
 

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .i18n import error_text, msg
 from .store import CLASSIFICATION_SCHEMA, SCHEMA, SCHEMA_V1, SCHEMA_V2, WORK_SCHEMA
 
 
@@ -43,7 +44,7 @@ class CatalogueSession:
             break
         else:
             self.close()
-            raise BackupError("Catalogue occupé par une restauration ou trop d’instances ouvertes.")
+            raise BackupError(msg("catalogue_occupe_par_une_restauration_ou_trop"))
 
     def lock(self, start, size, mode):
         self.file.seek(start)
@@ -59,7 +60,7 @@ class CatalogueSession:
                 try:
                     self.lock(start, size, self.msvcrt.LK_NBLCK)
                 except OSError as exc:
-                    raise BackupError("Fermez les autres instances de Ma Librarie avant de restaurer.") from exc
+                    raise BackupError(msg("fermez_les_autres_instances_de_ma_librarie")) from exc
                 acquired.append((start, size))
             yield
         finally:
@@ -93,7 +94,7 @@ def protect_active(catalogue, path):
     for reserved in (live, sessions_path(live),
                      *(Path(str(live) + suffix) for suffix in ("-wal", "-shm", "-journal", ".lock"))):
         if path == reserved or (path.exists() and reserved.exists() and path.samefile(reserved)):
-            raise BackupError("Choisissez un autre fichier que le catalogue actif et ses journaux.")
+            raise BackupError(msg("choisissez_un_autre_fichier_que_le_catalogue"))
     return path
 
 
@@ -108,7 +109,7 @@ def read_only(path):
 def copy_sqlite(source, target):
     def progress(status, _remaining, _total):
         if status in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
-            raise BackupError("Le fichier SQLite est occupé.")
+            raise BackupError(msg("le_fichier_sqlite_est_occupe"))
 
     source.backup(target, pages=256, progress=progress)
 
@@ -119,7 +120,7 @@ def schema_signature(db):
            WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name"""
     ).fetchall()
     if any(kind not in ("table", "index") for kind, _ in objects):
-        raise BackupError("Le schéma de la sauvegarde est incompatible.")
+        raise BackupError(msg("le_schema_de_la_sauvegarde_est_incompatible"))
     tables = {}
     for kind, name in objects:
         if kind != "table":
@@ -140,18 +141,18 @@ def validate(path, *, backup=True):
     with read_only(path) as db:
         if backup:
             if db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
-                raise BackupError("Ce fichier n’est pas une sauvegarde de Ma Librarie.")
+                raise BackupError(msg("ce_fichier_nest_pas_une_sauvegarde_de_ma"))
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version not in BACKUP_SCHEMAS:
-                raise BackupError("Cette version de sauvegarde n’est pas prise en charge.")
+                raise BackupError(msg("cette_version_de_sauvegarde_nest_pas_prise_en"))
         with closing(sqlite3.connect(":memory:")) as expected:
             expected.executescript(BACKUP_SCHEMAS[version])
             if schema_signature(db) != schema_signature(expected):
-                raise BackupError("Le schéma de la sauvegarde est incompatible.")
+                raise BackupError(msg("le_schema_de_la_sauvegarde_est_incompatible"))
         if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-            raise BackupError("Le catalogue SQLite est corrompu.")
+            raise BackupError(msg("le_catalogue_sqlite_est_corrompu"))
         if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise BackupError("Le catalogue contient des références invalides.")
+            raise BackupError(msg("le_catalogue_contient_des_references_invalides"))
         return tuple(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                      for table in ("collections", "roots"))
 
@@ -160,7 +161,7 @@ def stage_snapshot(source_path, target_path, *, mark_backup=False):
     with read_only(source_path) as source, closing(sqlite3.connect(target_path, timeout=0)) as target:
         copy_sqlite(source, target)
         if target.execute("PRAGMA journal_mode = DELETE").fetchone()[0] != "delete":
-            raise BackupError("Impossible de préparer un fichier de sauvegarde autonome.")
+            raise BackupError(msg("impossible_de_preparer_un_fichier_de_sauvegarde"))
         if mark_backup:
             target.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             target.execute(f"PRAGMA user_version = {BACKUP_VERSION}")
@@ -168,7 +169,7 @@ def stage_snapshot(source_path, target_path, *, mark_backup=False):
 
 def require_standalone(path):
     if any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")):
-        raise BackupError("Le fichier a des journaux SQLite. Fermez la base et choisissez un fichier autonome.")
+        raise BackupError(msg("le_fichier_a_des_journaux_sqlite_fermez_la_base"))
 
 
 def save_backup(catalogue, destination, *, overwrite=False):
@@ -197,9 +198,9 @@ def prepare_restore(catalogue, source):
         with source.open("rb") as stream:
             header = stream.read(20)
         if not header.startswith(b"SQLite format 3\0"):
-            raise BackupError("Fichier SQLite illisible ou corrompu.")
+            raise BackupError(msg("fichier_sqlite_illisible_ou_corrompu"))
         if header[18:20] != b"\x01\x01":
-            raise BackupError("La sauvegarde doit être un fichier SQLite autonome.")
+            raise BackupError(msg("la_sauvegarde_doit_etre_un_fichier_sqlite"))
         stage_snapshot(source, temporary)
         collections, roots = validate(temporary)
         with closing(sqlite3.connect(temporary)) as db:
@@ -212,7 +213,7 @@ def prepare_restore(catalogue, source):
         return PreparedBackup(temporary, source.name, collections, roots)
     except sqlite3.DatabaseError as exc:
         temporary.unlink(missing_ok=True)
-        raise BackupError(f"Sauvegarde SQLite illisible ou corrompue. {exc}") from exc
+        raise BackupError(msg("backup_unreadable", error=error_text(exc))) from exc
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -221,7 +222,7 @@ def prepare_restore(catalogue, source):
 def switch_journal(path, mode):
     with closing(sqlite3.connect(path, timeout=0)) as db:
         if db.execute(f"PRAGMA journal_mode = {mode}").fetchone()[0] != mode.lower():
-            raise BackupError("Impossible d’obtenir l’accès requis au catalogue SQLite.")
+            raise BackupError(msg("impossible_dobtenir_lacces_requis_au_catalogue"))
 
 
 def replace_contents(source, live):
@@ -243,7 +244,7 @@ def restore_backup(catalogue, prepared, session):
         try:
             save_backup(catalogue, safety)
         except (OSError, sqlite3.Error, BackupError) as exc:
-            raise BackupError(f"Impossible de créer la copie de sécurité. {exc}") from exc
+            raise BackupError(msg("safety_copy_error", error=error_text(exc))) from exc
         switched = False
         try:
             # SQLite checkpoints the old WAL and owns the replacement transaction.
@@ -259,14 +260,12 @@ def restore_backup(catalogue, prepared, session):
                     reopen(live)
                 except (OSError, sqlite3.Error, BackupError) as recovery:
                     raise BackupError(
-                        f"Restauration interrompue. Réouverture impossible. Copie de sécurité : {safety}. "
-                        f"Détail : {recovery}"
+                        msg("restore_reopen_error", path=safety, error=error_text(recovery))
                     ) from exc
                 raise BackupError(
-                    f"Restauration interrompue. Le catalogue précédent est rouvert. "
-                    f"Copie de sécurité : {safety}. Détail : {exc}"
+                    msg("restore_previous_reopened", path=safety, error=error_text(exc))
                 ) from exc
             raise BackupError(
-                f"Restauration interrompue. Copie de sécurité : {safety}. Détail : {exc}"
+                msg("restore_interrupted", path=safety, error=error_text(exc))
             ) from exc
     return safety

@@ -161,7 +161,7 @@ class SynchronizationChangeTests(unittest.TestCase):
         author("Nouvel auteur")
         removed.unlink()
         scan()
-        self.assertIn("1 absence(s)", app.status.get())
+        self.assertIn("1 absence", app.status.get())
         self.assertEqual("", badge_for(stable.name))
         self.assertEqual("", badge_for(removed.name))
         self.assertEqual("Modifié", badge_for(modified.name))

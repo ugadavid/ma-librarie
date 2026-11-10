@@ -4,6 +4,7 @@ import tkinter as tk
 from ctypes import wintypes
 from tkinter import ttk
 
+from .localized import locale, tr
 from .night import CARD, INK, LINE, SELECTED, TEAL, TEXT
 
 
@@ -11,6 +12,11 @@ DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
 DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
 GA_ROOT = 2
+
+MENU_MNEMONICS = {
+    "en": dict(zip(("catalogue", "bibliotheques", "recherche", "affichage", "aide", "langue"), "clsvhg")),
+    "es": dict(zip(("catalogue", "bibliotheques", "recherche", "affichage", "aide", "langue"), "cbsvai")),
+}
 
 
 def colorref(color):
@@ -68,10 +74,10 @@ class MenuBar(ttk.Frame):
         if hasattr(window, "text_fonts"):
             row.configure(height=window.text_fonts.max_line("TkDefaultFont") + 16)
             row.pack_propagate(False)
-        underlines = underlines or {}
+        self.underlines = underlines or {}
+        self.mnemonics = {}
         for label, menu in entries:
-            underline = underlines.get(label, 0)
-            button = ttk.Button(row, text=label, underline=underline, style="Night.Menu.TButton",
+            button = ttk.Button(row, style="Night.Menu.TButton",
                                 command=lambda m=menu, key=label: self.post(key, m))
             self.buttons[label] = button
             button.pack(side="left", fill="y")
@@ -79,10 +85,23 @@ class MenuBar(ttk.Frame):
             button.bind("<Left>", lambda _event, key=label: self.step(key, -1))
             button.bind("<Right>", lambda _event, key=label: self.step(key, 1))
             button.bind("<Escape>", self.cancel)
-            self.bind_key(f"<Alt-KeyPress-{label[underline].lower()}>",
-                          lambda _event, b=button: self.invoke(b))
         self.bind_key("<F10>", self.focus_menu)
+        locale(window).widgets.add(self)
+        self.translate()
         tk.Frame(self, height=1, background=LINE).pack(fill="x")
+
+    def translate(self):
+        for sequence, callback in self.mnemonics.items():
+            self.window.unbind(sequence, callback)
+        self.mnemonics.clear()
+        keys = MENU_MNEMONICS.get(locale(self.window).code, {})
+        for label, button in self.buttons.items():
+            text = tr(self.window, label)
+            underline = self.underlines.get(label, 0)
+            key = keys.get(getattr(label, "key", None), text[underline].lower())
+            button.configure(text=text, underline=text.lower().index(key))
+            sequence = f"<Alt-KeyPress-{key}>"
+            self.mnemonics[sequence] = self.window.bind(sequence, lambda _event, b=button: self.invoke(b), add="+")
 
     def bind_key(self, sequence, callback):
         self.bindings[sequence] = self.window.bind(sequence, callback, add="+")
@@ -154,6 +173,6 @@ class MenuBar(ttk.Frame):
             raise
 
     def destroy(self):
-        for sequence, callback in self.bindings.items():
+        for sequence, callback in (self.bindings | self.mnemonics).items():
             self.window.unbind(sequence, callback)
         super().destroy()

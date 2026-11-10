@@ -4,6 +4,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from .i18n import msg
+from .localized import tr
 from .book_metadata import BOOK_EXTENSIONS
 from .covers import ALBUM_EXTENSIONS, POSTER_EXTENSIONS, load_cover
 from .night import CARD, GOLD, INK, LINE, MUTED, PANEL, SELECTED, TEAL, TEXT
@@ -151,9 +153,11 @@ class Mosaic(ttk.Frame):
             card = self.canvas.create_rectangle(x, y, right, y + self.row_height - GAP,
                                                 fill=CARD, outline=LINE)
             self.canvas.create_rectangle(x + 8, y + 8, x + 103, y + 135, fill=PANEL, outline=LINE)
-            format_name = row["extension"].upper() or "Sans extension"
-            missing = {"books": "Couverture", "movies": "Affiche", "music": "Pochette"}.get(self.library, "Image")
-            placeholder = f"{missing}\nabsente" if self.face.measure(missing) <= 90 else "Pas\nd’image"
+            format_name = row["extension"].upper() or tr(self, msg("sans_extension"))
+            missing = {"books": msg("couverture"), "movies": msg("affiche"), "music": msg("pochette")}.get(self.library, msg("image"))
+            placeholder = tr(self, msg("missing_art", art=missing))
+            if max(self.face.measure(line) for line in placeholder.splitlines()) > 90:
+                placeholder = tr(self, msg("pas_dimage"))
             fallback = self.canvas.create_text(
                 x + 55, y + 72, text=placeholder, justify="center", font=self.face, fill=MUTED,
             )
@@ -174,7 +178,8 @@ class Mosaic(ttk.Frame):
             else:
                 self.draw_badge(left, y + formats_top, fit(format_name, self.face, max(12, label_width - 12)))
                 state = self.file_state(row)
-                annotation = " · ".join(filter(None, (self.change_badge(row), state if state != "Disponible" else "")))
+                annotation = " · ".join(tr(self, value) for value in
+                                        (self.change_badge(row), state if state != msg("disponible") else "") if value)
                 self.canvas.create_text(
                     left, y + formats_top + self.badge_height + 7, anchor="nw", font=self.face, fill=MUTED,
                     text=fit(annotation, self.face, label_width),
@@ -191,7 +196,7 @@ class Mosaic(ttk.Frame):
         x = y = 0
         badges = []
         for name, count in format_counts(members):
-            label = fit(format_label(name, count), self.face, max(12, available - 8))
+            label = fit(tr(self, format_label(name, count)), self.face, max(12, available - 8))
             width = self.face.measure(label) + 8
             if x and x + width > available:
                 x, y = 0, y + self.badge_height + 3

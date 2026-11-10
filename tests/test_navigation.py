@@ -68,7 +68,7 @@ class NavigationTests(unittest.TestCase):
         app = App(window, db)
         window.update()
         self.assertTrue(app.menubar.winfo_viewable())
-        self.assertEqual(["Catalogue", "Bibliothèques", "Recherche", "Affichage", "Aide"],
+        self.assertEqual(["Catalogue", "Bibliothèques", "Recherche", "Affichage", "Aide", "Langue"],
                          [button.cget("text") for button in app.menubar.buttons.values()])
         for attr in ("new_button", "manage_button", "add_button", "sync_button", "relocate_button",
                      "duplicate_button", "extension_button", "sort_choice", "library_buttons"):

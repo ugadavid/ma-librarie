@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from .localized import Button, Label
+from .i18n import join, msg, plural
 from . import dialogs as messagebox
 from .dialogs import NightWindow
 
@@ -11,7 +13,7 @@ class TagDialog(NightWindow):
     def __init__(self, parent, tags, count, apply, *, subject=None):
         super().__init__(parent)
         self.withdraw()
-        self.title("Gérer les tags")
+        self.title(msg("gerer_les_tags_2"))
         self.transient(parent)
         self.bind("<Escape>", lambda _event: self.destroy())
         self.apply_changes = apply
@@ -22,12 +24,12 @@ class TagDialog(NightWindow):
         self.configure(background=LINE)
         panel = ttk.Frame(self, padding=14)
         panel.pack(fill="both", expand=True, padx=1, pady=1)
-        ttk.Label(panel, text="Gérer les tags", style="Night.Title.TLabel").pack(anchor="w", pady=(0, 9))
+        Label(panel, text=msg("gerer_les_tags_2"), style="Night.Title.TLabel").pack(anchor="w", pady=(0, 9))
         layout = ttk.Frame(panel)
         layout.pack(fill="both", expand=True)
         controls = ttk.Frame(layout)
         controls.pack(side="left", fill="both", expand=True, padx=(0, 14))
-        ttk.Label(controls, text=subject or f"{count} fichier{'s' if count > 1 else ''} sélectionné{'s' if count > 1 else ''}",
+        Label(controls, text=subject or plural("files_selected", count),
                   style="Night.Note.TLabel").pack(anchor="w")
         Art(layout, "tags", width=204, height=260).pack(side="right", fill="y")
 
@@ -47,21 +49,21 @@ class TagDialog(NightWindow):
         for tag, (name, matches) in tags.items():
             self.add_choice(tag, name, matches)
 
-        ttk.Label(controls, text="Les tags mixtes gardent leurs associations si vous laissez leur case telle quelle.",
+        Label(controls, text=msg("les_tags_mixtes_gardent_leurs_associations_si"),
                   wraplength=375).pack(anchor="w", pady=(0, 8))
-        ttk.Label(controls, text="Nom du nouveau tag").pack(anchor="w")
+        Label(controls, text=msg("nom_du_nouveau_tag")).pack(anchor="w")
         new = ttk.Frame(controls)
         new.pack(fill="x")
         self.name = tk.StringVar(self)
         entry = ttk.Entry(new, textvariable=self.name)
         entry.pack(side="left", expand=True, fill="x")
         entry.bind("<Return>", self.add_tag)
-        ttk.Button(new, text="Ajouter", command=self.add_tag).pack(side="left", padx=(6, 0))
+        Button(new, text=msg("ajouter"), command=self.add_tag).pack(side="left", padx=(6, 0))
         ttk.Separator(panel).pack(fill="x", pady=(12, 8))
         actions = ttk.Frame(panel)
         actions.pack(fill="x")
-        ttk.Button(actions, text="Appliquer", command=self.apply, style="Night.Primary.TButton").pack(side="right")
-        ttk.Button(actions, text="Annuler", command=self.destroy).pack(side="right", padx=6)
+        Button(actions, text=msg("appliquer"), command=self.apply, style="Night.Primary.TButton").pack(side="right")
+        Button(actions, text=msg("annuler"), command=self.destroy).pack(side="right", padx=6)
         self.update_idletasks()
         x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self.winfo_reqwidth()) // 2)
         y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self.winfo_reqheight()) // 2)
@@ -75,14 +77,14 @@ class TagDialog(NightWindow):
         self.choices[tag] = value, initial
         row = ttk.Frame(self.options, padding=(5, 2))
         row.pack(fill="x")
-        state = ttk.Label(row)
+        state = Label(row)
         state.pack(side="right", padx=6)
 
         def show_state():
             current = value.get()
             amount = matches if current == -1 else self.count if current else 0
-            label = {-1: "Mixte", 0: "Absent", 1: "Complet"}[current]
-            state.configure(text=f"{amount}/{self.count}  ·  {label}",
+            label = {-1: msg("mixte"), 0: msg("absent"), 1: msg("complet")}[current]
+            state.configure(text=join("  ·  ", (f"{amount}/{self.count}", label)),
                             foreground=GOLD if current == -1 else TEAL if current else MUTED)
 
         check = tk.Checkbutton(
@@ -105,7 +107,7 @@ class TagDialog(NightWindow):
     def add_tag(self, _event=None):
         name = self.name.get().strip()
         if not name or name.casefold() in self.names:
-            messagebox.showerror("Tags", "Donnez un nom de tag différent et non vide.", parent=self)
+            messagebox.showerror(msg("tags"), msg("donnez_un_nom_de_tag_different_et_non_vide"), parent=self)
             return
         self.names.add(name.casefold())
         self.add_choice(name, name, self.count)

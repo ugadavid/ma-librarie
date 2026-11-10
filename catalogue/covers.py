@@ -8,6 +8,7 @@ import zlib
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from .i18n import msg
 from .book_metadata import (
     BOOK_EXTENSIONS, EPUB_LIMIT, OPF, MetadataError, companion_metadata, epub_package, normalized,
 )
@@ -119,17 +120,17 @@ def siblings(folder):
 
 def load_cover(row, *, size=THUMBNAIL_SIZE):
     if Image is None:
-        return None, "Couvertures indisponibles sans Pillow."
+        return None, msg("couvertures_indisponibles_sans_pillow")
 
     source_args = row["root_path"], row["volume"], row["root_relative"]
     relative = Path(row["relative"])
     try:
         _, path, _ = verified_file(*source_args, str(relative))
     except SourceProblem as exc:
-        return None, ("Couverture indisponible hors ligne." if exc.state == "offline" else
-                      "Couverture indisponible pour ce fichier.")
+        return None, (msg("couverture_indisponible_hors_ligne") if exc.state == "offline" else
+                      msg("couverture_indisponible_pour_ce_fichier"))
     except OSError:
-        return None, "Couverture indisponible pour ce fichier."
+        return None, msg("couverture_indisponible_pour_ce_fichier")
 
     def sibling_path(name):
         return verified_file(*source_args, str(relative.with_name(name)))[1]
@@ -151,14 +152,14 @@ def load_cover(row, *, size=THUMBNAIL_SIZE):
     named.sort(key=lambda n: (IMAGE_EXTENSIONS.index(Path(n).suffix.casefold()), n.casefold(), n))
     for name in named[:8]:
         if data := local_image(name):
-            return data, "Image de même nom"
+            return data, msg("image_de_meme_nom")
 
     if row["extension"] not in BOOK_EXTENSIONS:
-        return None, "Aucune image de même nom lisible."
+        return None, msg("aucune_image_de_meme_nom_lisible")
 
     if row["extension"] == "epub":
         if data := epub_cover(path, size):
-            return data, "Couverture intégrée à l’EPUB"
+            return data, msg("couverture_integree_a_lepub")
 
     if complete:
         generic = [name for name in names if name.casefold() == "cover.jpg"]
@@ -176,5 +177,5 @@ def load_cover(row, *, size=THUMBNAIL_SIZE):
             except (OSError, MetadataError):
                 pass
         if len(generic) == 1 and associated and (data := local_image(generic[0])):
-            return data, "Couverture générique associée"
-    return None, "Aucune couverture locale lisible."
+            return data, msg("couverture_generique_associee")
+    return None, msg("aucune_couverture_locale_lisible")

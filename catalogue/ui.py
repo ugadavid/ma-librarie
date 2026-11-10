@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from tkinter import filedialog, ttk
 
+from .i18n import LANGUAGES, error_text, join, language_code, msg, plural
+from .localized import Button, Checkbutton, Label, ReadOnlyText, TextVar, Treeview, file_dialog, locale, tr
 from . import APP_NAME
 from . import dialogs as messagebox, dialogs as simpledialog
 from .dialogs import FIELD_COLORS, NightWindow
@@ -27,13 +29,13 @@ from .windows import explorer_target, select_in_explorer
 from .work_view import FormatFiles, ProposalDialog, WorkPicker, format_counts, format_label
 
 
-ALL_EXTENSIONS = "Toutes les extensions"
+ALL_EXTENSIONS = msg("toutes_les_extensions")
 EXTENSION_PRESETS = {
-    "Livres": BOOK_EXTENSIONS,
-    "Films": frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm")),
+    msg("livres"): BOOK_EXTENSIONS,
+    msg("films"): frozenset(("mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm")),
 }
 PAGE_SIZE = 200
-CHANGE_SHELVES = {"new": "Nouveautés", "modified": "Modifiés"}
+CHANGE_SHELVES = {"new": msg("nouveautes"), "modified": msg("modifies")}
 
 
 def date_label(nanoseconds):
@@ -46,14 +48,14 @@ def date_label(nanoseconds):
 
 
 def extension_label(extension):
-    return f".{extension.upper()}" if extension else "Sans extension"
+    return f".{extension.upper()}" if extension else msg("sans_extension")
 
 
 class ExtensionDialog(NightWindow):
     def __init__(self, parent, available, selected, apply_filter):
         super().__init__(parent)
         self.withdraw()
-        self.title("Extensions")
+        self.title(msg("extensions"))
         self.transient(parent)
         self.resizable(False, False)
         self.apply_filter = apply_filter
@@ -63,19 +65,19 @@ class ExtensionDialog(NightWindow):
         panel = ttk.Frame(self, padding=12)
         panel.pack(fill="both", expand=True)
         self.all_formats = tk.BooleanVar(self, value=selected is None)
-        ttk.Checkbutton(
+        Checkbutton(
             panel, text=ALL_EXTENSIONS, variable=self.all_formats, command=self.update_list
         ).pack(anchor="w")
 
         presets = ttk.Frame(panel)
         presets.pack(fill="x", pady=8)
-        ttk.Label(presets, text="Préréglages").pack(side="left")
+        Label(presets, text=msg("prereglages")).pack(side="left")
         for name, formats in EXTENSION_PRESETS.items():
-            ttk.Button(presets, text=name, command=lambda choice=formats: self.preset(choice)).pack(
+            Button(presets, text=name, command=lambda choice=formats: self.preset(choice)).pack(
                 side="left", padx=(6, 0)
             )
 
-        ttk.Label(panel, text="Cliquez sur les formats à afficher.").pack(anchor="w")
+        Label(panel, text=msg("cliquez_sur_les_formats_a_afficher")).pack(anchor="w")
         choices = ttk.Frame(panel)
         choices.pack(fill="both", expand=True, pady=(4, 8))
         self.options = tk.Listbox(choices, selectmode="multiple", exportselection=False, height=11, **FIELD_COLORS)
@@ -83,14 +85,14 @@ class ExtensionDialog(NightWindow):
         self.options.configure(yscrollcommand=scroll.set)
         self.options.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        self.options.insert("end", *(extension_label(ext) for ext in self.formats))
+        self.options.insert("end", *(tr(self, extension_label(ext)) for ext in self.formats))
         self.select_formats(selected or ())
         self.update_list()
 
         actions = ttk.Frame(panel)
         actions.pack(fill="x")
-        ttk.Button(actions, text="Appliquer", command=self.apply).pack(side="right")
-        ttk.Button(actions, text="Annuler", command=self.destroy).pack(side="right", padx=6)
+        Button(actions, text=msg("appliquer"), command=self.apply).pack(side="right")
+        Button(actions, text=msg("annuler"), command=self.destroy).pack(side="right", padx=6)
         self.bind("<Escape>", lambda _event: self.destroy())
         self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() - self.winfo_reqwidth()) // 2
@@ -121,7 +123,7 @@ class ExtensionDialog(NightWindow):
         try:
             self.apply_filter(selected)
         except sqlite3.Error as exc:
-            messagebox.showerror("Extensions", str(exc), parent=self)
+            messagebox.showerror(msg("extensions"), error_text(exc), parent=self)
         else:
             self.destroy()
 
@@ -130,18 +132,18 @@ class ScanWindow(NightWindow):
     def __init__(self, parent):
         super().__init__(parent)
         self.withdraw()
-        self.title("Synchronisation du catalogue")
+        self.title(msg("synchronisation_du_catalogue"))
         self.transient(parent)
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", lambda: None)
 
         panel = ttk.Frame(self, padding=14)
         panel.pack(fill="both", expand=True)
-        self.position = ttk.Label(panel, text="Préparation de l’inventaire…")
+        self.position = Label(panel, text=msg("preparation_de_linventaire"))
         self.position.pack(anchor="w")
-        self.source = ttk.Label(panel, wraplength=420)
+        self.source = Label(panel, wraplength=420)
         self.source.pack(anchor="w", pady=(4, 8))
-        self.count = ttk.Label(panel, text="0 fichier examiné")
+        self.count = Label(panel, text=msg("0_fichier_examine"))
         self.count.pack(anchor="w")
         self.bar = ttk.Progressbar(panel, mode="indeterminate", length=420)
         self.bar.pack(fill="x", pady=(8, 0))
@@ -157,11 +159,11 @@ class ScanWindow(NightWindow):
         super().destroy()
 
     def show_progress(self, progress):
-        self.position.configure(text=f"Source {progress.position} sur {progress.total}")
+        self.position.configure(text=msg("scan_source", position=progress.position, total=progress.total))
         self.source.configure(text=progress.path)
-        count = f"{progress.examined:,}".replace(",", "\u202f")
-        label = "fichier examiné" if progress.examined <= 1 else "fichiers examinés"
-        self.count.configure(text=f"{count} {label}")
+        examined = plural("scan_files", progress.examined)
+        self.count.configure(text=examined)
+        return examined
 
 
 class App(ttk.Frame):
@@ -172,6 +174,9 @@ class App(ttk.Frame):
         super().__init__(window, padding=10)
         self.window = window
         self.catalogue = catalogue
+        code = language_code(catalogue.ui_language())
+        self.language = tk.StringVar(window, value=code)
+        locale(window).change(code)
         self.session = session if session is not None else CatalogueSession(catalogue.filename)
         self.owns_session = session is None
         self.archive_running = False
@@ -204,7 +209,7 @@ class App(ttk.Frame):
         self.resize_start = None
         self.pending_widths = {}
         self.errors = []
-        self.sort = "Nom", False
+        self.sort = msg("nom"), False
         self.page = 0
         self.pending_search = None
         self.selected_extensions = None
@@ -231,12 +236,12 @@ class App(ttk.Frame):
         self.banner.pack(fill="x", pady=(0, 7))
         search_bar = self.search_bar = ttk.Frame(self.workspace)
         search_bar.pack(fill="x", pady=(0, 8))
-        ttk.Label(search_bar, text="Rechercher").pack(side="left")
+        Label(search_bar, text=msg("rechercher")).pack(side="left")
         self.query = tk.StringVar()
         self.search_entry = ttk.Entry(search_bar, textvariable=self.query)
         self.search_entry.pack(side="left", fill="x", expand=True, padx=6)
         self.query.trace_add("write", self.schedule_search)
-        self.format_indicator = ttk.Label(search_bar)
+        self.format_indicator = Label(search_bar)
 
         panes = self.workspace_panes = ttk.Panedwindow(self.workspace, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -245,7 +250,7 @@ class App(ttk.Frame):
         panes.add(sources, weight=0)
         panes.add(results, weight=4)
 
-        self.sources_label = ttk.Label(sources, text="Rayons et collections")
+        self.sources_label = Label(sources, text=msg("rayons_et_collections"))
         self.sources_label.pack(anchor="w")
         self.tree = self.scroll_tree(sources, show="tree")
         self.tree.column("#0", width=185, stretch=True)
@@ -259,14 +264,14 @@ class App(ttk.Frame):
         self.result_header = ttk.Frame(results, padding=(0, 0, 0, 5))
         self.result_header.pack(fill="x")
         self.result_header.columnconfigure(0, weight=1)
-        self.scope_label = ttk.Label(self.result_header, style="Night.Title.TLabel")
+        self.scope_label = Label(self.result_header, style="Night.Title.TLabel")
         self.scope_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
 
         self.navigation = ttk.Frame(self.result_header)
         self.navigation.grid(row=0, column=1, sticky="e")
-        self.previous = ttk.Button(self.navigation, text="Précédent", command=lambda: self.move_page(-1))
-        self.next = ttk.Button(self.navigation, text="Suivant", command=lambda: self.move_page(1))
-        self.page_label = ttk.Label(self.navigation, width=14, anchor="center", justify="center", wraplength=154)
+        self.previous = Button(self.navigation, text=msg("precedent"), command=lambda: self.move_page(-1))
+        self.next = Button(self.navigation, text=msg("suivant"), command=lambda: self.move_page(1))
+        self.page_label = Label(self.navigation, width=14, anchor="center", justify="center", wraplength=154)
         for widget in (self.previous, self.page_label, self.next):
             widget.pack(side="left")
         self.result_header.bind("<Configure>", self.layout_results_header)
@@ -290,8 +295,8 @@ class App(ttk.Frame):
         )
         self.table.column("#0", width=28, minwidth=24, stretch=False)
         self.table.column("path", width=470, stretch=False)
-        self.table.heading("path", text="Chemin")
-        labels = ("Nom", "Collections", "Extension", "Taille", "Modification", "Première détection", "État")
+        self.table.heading("path", text=msg("chemin"))
+        labels = (msg("nom"), msg("collections"), msg("extension"), msg("taille"), msg("modification"), msg("premiere_detection"), msg("etat"))
         self.headings = dict(zip(columns, labels))
         self.build_menus()
         self.default_widths = dict(zip(columns, (235, 155, 85, 85, 125, 145, 105)))
@@ -312,8 +317,8 @@ class App(ttk.Frame):
 
         details = self.list_details = ttk.Frame(self.workspace, padding=(0, 6))
         details.pack(fill="x")
-        self.details = tk.StringVar()
-        summary = ttk.Label(details, textvariable=self.details)
+        self.details = TextVar(self)
+        summary = Label(details, textvariable=self.details)
         summary.pack(anchor="w")
         details.bind("<Configure>", lambda event: summary.configure(wraplength=event.width))
         self.full_path = tk.StringVar()
@@ -324,13 +329,13 @@ class App(ttk.Frame):
         bottom.columnconfigure(0, weight=1)
         bottom.rowconfigure(0, minsize=self.text_fonts.max_line("TkDefaultFont") + 4)
         bottom.rowconfigure(1, minsize=self.text_fonts.max_line("TkDefaultFont") + 22)
-        self.context_status = tk.StringVar()
-        context = ttk.Label(bottom, textvariable=self.context_status, style="Night.Note.TLabel")
+        self.context_status = TextVar(self)
+        context = Label(bottom, textvariable=self.context_status, style="Night.Note.TLabel")
         context.grid(row=0, column=0, columnspan=2, sticky="w")
-        self.status = tk.StringVar(value="Prêt")
-        operation = ttk.Label(bottom, textvariable=self.status)
+        self.status = TextVar(self, value=msg("pret"))
+        operation = Label(bottom, textvariable=self.status)
         operation.grid(row=1, column=0, sticky="w")
-        self.error_button = ttk.Button(bottom, text="Voir les erreurs", command=self.show_errors)
+        self.error_button = Button(bottom, text=msg("voir_les_erreurs"), command=self.show_errors)
         self.error_button.grid(row=1, column=1, padx=(8, 0), sticky="e")
 
         def wrap_status(event):
@@ -347,23 +352,28 @@ class App(ttk.Frame):
         self.search_menu = NightMenu(self, tearoff=False)
         self.display_menu = NightMenu(self, tearoff=False)
         self.help_menu = NightMenu(self, tearoff=False)
+        self.language_menu = NightMenu(self, tearoff=False)
         self.menubar = MenuBar(self, self.window, (
-            ("Catalogue", self.catalogue_menu), ("Bibliothèques", self.library_menu),
-            ("Recherche", self.search_menu), ("Affichage", self.display_menu), ("Aide", self.help_menu),
-        ), underlines={"Aide": 1})
+            (msg("catalogue"), self.catalogue_menu), (msg("bibliotheques"), self.library_menu),
+            (msg("recherche"), self.search_menu), (msg("affichage"), self.display_menu), (msg("aide"), self.help_menu),
+            (msg("langue"), self.language_menu),
+        ), underlines={msg("aide"): 1})
         self.menubar.pack(fill="x", before=self.workspace, pady=(0, 7))
-        self.help_menu.add_command(label="Documentation", underline=0,
+        self.help_menu.add_command(label=msg("documentation"), underline=0,
                                    command=lambda: HelpDialog(self, documentation=True))
-        self.help_menu.add_command(label="Raccourcis clavier", underline=0, command=lambda: HelpDialog(self))
-        self.help_menu.add_command(label=f"À propos de {APP_NAME}", underline=2,
+        self.help_menu.add_command(label=msg("raccourcis_clavier"), underline=0, command=lambda: HelpDialog(self))
+        self.help_menu.add_command(label=msg("about", name=APP_NAME), underline=2,
                                    command=lambda: AboutDialog(self))
+        for code, name in LANGUAGES.items():
+            self.language_menu.add_radiobutton(label=name, variable=self.language, value=code,
+                                               underline=1 if code == "es" else 0, command=self.change_language)
 
-        self.catalogue_menu.add_command(label="Nouvelle collection…", command=self.new_collection)
-        self.catalogue_menu.add_command(label="Sauvegarder le catalogue…", command=self.save_catalogue)
-        self.catalogue_menu.add_command(label="Restaurer une sauvegarde…", command=self.restore_catalogue)
-        self.catalogue_menu.add_command(label="Accueil", command=self.show_home)
+        self.catalogue_menu.add_command(label=msg("nouvelle_collection"), command=self.new_collection)
+        self.catalogue_menu.add_command(label=msg("sauvegarder_le_catalogue"), command=self.save_catalogue)
+        self.catalogue_menu.add_command(label=msg("restaurer_une_sauvegarde"), command=self.restore_catalogue)
+        self.catalogue_menu.add_command(label=msg("accueil"), command=self.show_home)
         self.catalogue_menu.add_separator()
-        self.catalogue_menu.add_command(label="Quitter", command=self.close)
+        self.catalogue_menu.add_command(label=msg("quitter"), command=self.close)
 
         for key, (label, _) in LIBRARIES.items():
             if key == UNCLASSIFIED:
@@ -373,14 +383,14 @@ class App(ttk.Frame):
                 underline=2 if key == UNCLASSIFIED else 0,
             )
 
-        self.search_menu.add_command(label="Filtrer par extension…", command=self.edit_extensions)
-        self.search_menu.add_command(label="Réinitialiser le filtre", command=self.reset_extensions)
-        self.search_menu.add_command(label="Rechercher les doublons…", command=self.open_duplicates)
+        self.search_menu.add_command(label=msg("filtrer_par_extension"), command=self.edit_extensions)
+        self.search_menu.add_command(label=msg("reinitialiser_le_filtre"), command=self.reset_extensions)
+        self.search_menu.add_command(label=msg("rechercher_les_doublons"), command=self.open_duplicates)
 
-        for label, mode in (("Liste", "list"), ("Mosaïque", "mosaic")):
+        for label, mode in ((msg("liste"), "list"), (msg("mosaique"), "mosaic")):
             self.display_menu.add_radiobutton(label=label, variable=self.view_mode, value=mode,
                                               command=self.change_results_view)
-        self.display_menu.add_checkbutton(label="Volet de détails", variable=self.details_visible,
+        self.display_menu.add_checkbutton(label=msg("volet_de_details"), variable=self.details_visible,
                                           command=self.change_results_view)
         self.sort_menu = NightMenu(self.display_menu, tearoff=False)
         self.sort_column = tk.StringVar(self.window)
@@ -390,22 +400,45 @@ class App(ttk.Frame):
                 label=label, value=label, variable=self.sort_column, command=self.choose_sort_column
             )
         self.sort_menu.add_separator()
-        for label, descending in (("Croissant", False), ("Décroissant", True)):
+        for label, descending in ((msg("croissant"), False), (msg("decroissant"), True)):
             self.sort_menu.add_radiobutton(
                 label=label, value=descending, variable=self.sort_descending, command=self.choose_sort_order
             )
-        self.display_menu.add_cascade(label="Trier par", menu=self.sort_menu)
-        self.display_menu.add_checkbutton(label="Regrouper par ouvrage", variable=self.grouped_books,
+        self.display_menu.add_cascade(label=msg("trier_par"), menu=self.sort_menu)
+        self.display_menu.add_checkbutton(label=msg("regrouper_par_ouvrage"), variable=self.grouped_books,
                                           command=self.toggle_grouping)
         self.display_menu.add_separator()
         self.text_commands = (
-            ("Agrandir le texte", "Ctrl++ / Ctrl+=", 1),
-            ("Réduire le texte", "Ctrl+−", -1),
-            ("Taille du texte par défaut", "Ctrl+0 / Ctrl+à", 0),
+            (msg("agrandir_le_texte"), "Ctrl++ / Ctrl+=", 1),
+            (msg("reduire_le_texte"), "Ctrl+−", -1),
+            (msg("taille_du_texte_par_defaut"), "Ctrl+0 / Ctrl+à", 0),
         )
         for label, shortcut, delta in self.text_commands:
             self.display_menu.add_command(label=label, accelerator=shortcut,
                                           command=lambda step=delta: self.change_text_size(step))
+
+    def change_language(self):
+        current = locale(self).code
+        code = language_code(self.language.get())
+        if code != current:
+            try:
+                self.catalogue.save_ui_language(code)
+            except sqlite3.Error as exc:
+                self.language.set(current)
+                messagebox.showerror(msg("langue"), msg("language_error", error=error_text(exc)), parent=self)
+                return
+            self.apply_language(code)
+        self.language.set(code)
+
+    def apply_language(self, code):
+        self.language.set(code)
+        locale(self).change(code)
+        self.load_column_widths()
+        self.layout_source_pane()
+        self.layout_results_header()
+        if self.mosaic.entries:
+            self.mosaic.redraw()
+            self.mosaic.reveal(self.mosaic.selected)
 
     def text_shortcut(self, event):
         steps = {"plus": 1, "equal": 1, "KP_Add": 1, "minus": -1, "KP_Subtract": -1,
@@ -423,7 +456,7 @@ class App(ttk.Frame):
         try:
             self.catalogue.save_text_offset(offset)
         except sqlite3.Error as exc:
-            messagebox.showerror("Taille du texte", str(exc), parent=self)
+            messagebox.showerror(msg("taille_du_texte"), error_text(exc), parent=self)
             return
         self.apply_text_offset(offset)
 
@@ -520,7 +553,7 @@ class App(ttk.Frame):
         frame.pack(fill="both", expand=True)
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
-        tree = ttk.Treeview(frame, selectmode=selectmode, **options)
+        tree = Treeview(frame, selectmode=selectmode, **options)
         vertical = ttk.Scrollbar(frame, command=tree.yview)
         horizontal = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
@@ -547,8 +580,8 @@ class App(ttk.Frame):
         self.nodes.clear()
         self.collection_items.clear()
         self.tree.insert("", "end", iid="all", text=LIBRARIES[self.library.get()][1])
-        self.tree.insert("", "end", iid="favorites", text="Favoris")
-        self.tree.insert("", "end", iid="shelves", text="Mes rayons", open=True)
+        self.tree.insert("", "end", iid="favorites", text=msg("favoris"))
+        self.tree.insert("", "end", iid="shelves", text=msg("mes_rayons"), open=True)
         for automatic, name in CHANGE_SHELVES.items():
             self.tree.insert("shelves", "end", iid=automatic, text=name, tags=("automatic",))
         self.load_shelves()
@@ -567,7 +600,7 @@ class App(ttk.Frame):
                 self.roots[root_id] = root
                 node = self.tree.insert(
                     item, "end", iid=f"root-{root_id}",
-                    text=f'{root["path"]} · {STATES[root["state"]]}'
+                    text=join(" · ", (root["path"], STATES[root["state"]]))
                 )
                 self.nodes[node] = (root_id, "")
                 self.tree.insert(node, "end")
@@ -614,19 +647,21 @@ class App(ttk.Frame):
 
     def update_extension_label(self):
         selected = self.selected_extensions
+        self.format_status = ""
         if selected is None:
             self.format_indicator.configure(text="")
             self.format_indicator.pack_forget()
             return
         if not selected:
-            label = "Aucune extension"
+            label = msg("aucune_extension")
         else:
             label = next((name for name, formats in EXTENSION_PRESETS.items() if selected == formats),
                          None)
             if label is None:
                 label = (extension_label(next(iter(selected))) if len(selected) == 1
-                         else f"{len(selected)} extensions")
-        self.format_indicator.configure(text=f"Formats · {label}")
+                         else plural("extension_count", len(selected)))
+        self.format_status = msg("formats_filter", label=label)
+        self.format_indicator.configure(text=self.format_status)
         self.format_indicator.pack(side="left", padx=(0, 6))
 
     def reset_extensions(self):
@@ -634,7 +669,7 @@ class App(ttk.Frame):
             try:
                 self.apply_extensions(self.collection_id(), None, library=self.filter_library())
             except sqlite3.Error as exc:
-                messagebox.showerror("Extensions", str(exc), parent=self.window)
+                messagebox.showerror(msg("extensions"), error_text(exc), parent=self.window)
 
     def edit_extensions(self):
         if self.busy:
@@ -662,7 +697,8 @@ class App(ttk.Frame):
         self.tree.delete(*children)
         root_id, parent = self.nodes[node]
         for row in self.catalogue.directories(root_id, parent):
-            label = row["name"] + (" · Accès impossible" if row["state"] == "error" else "")
+            label = (join(" · ", (row["name"], STATES["error"]))
+                     if row["state"] == "error" else row["name"])
             child = self.tree.insert(node, "end", text=label)
             self.nodes[child] = (root_id, row["relative"])
             self.tree.insert(child, "end")
@@ -683,11 +719,11 @@ class App(ttk.Frame):
             root = self.roots[root_id]
             node = f'collection-{root["collection_id"]}'
             folder = Path(root["path"]) / relative
-            label = f'{folder.name or str(folder)} · {STATES[root["state"]]}'
+            label = join(" · ", (folder.name or str(folder), STATES[root["state"]]))
         elif node in self.collection_items:
             label = self.collection_items[node]["name"]
         elif node == "favorites":
-            label = "Favoris"
+            label = msg("favoris")
         elif node in CHANGE_SHELVES:
             label = CHANGE_SHELVES[node]
         elif tag:
@@ -704,7 +740,8 @@ class App(ttk.Frame):
 
     def show_scope_title(self, scope):
         library, root_title = LIBRARIES[self.library.get()]
-        self.scope_label.configure(text=f"{library} › {scope}" if scope else root_title)
+        self.scope_heading = join(" › ", (library, scope)) if scope else root_title
+        self.scope_label.configure(text=self.scope_heading)
         parts = [library]
         if self.scope:
             root_id, relative = self.scope
@@ -712,24 +749,24 @@ class App(ttk.Frame):
             parts.extend((self.active_collection["name"], source.name or str(source), *Path(relative).parts))
         else:
             parts.append(scope or root_title)
-        self.scope_status = " › ".join(parts)
+        self.scope_status = join(" › ", parts)
         self.layout_results_header()
 
     def update_context_status(self, more=False):
         if self.at_home:
-            self.context_status.set("Accueil")
+            self.context_status.set(msg("accueil"))
             return
         count = len(self.rows)
-        results = f"{count} résultat{'s' if count > 1 else ''}" if count else "Aucun résultat"
+        results = plural("results_count", count) if count else msg("aucun_resultat")
         if self.page or more:
-            results += f" sur la page {self.page + 1}"
+            results = msg("results_on_page", results=results, page=self.page + 1)
         parts = [self.scope_status]
         if self.selected_extensions is not None:
-            parts.append(self.format_indicator.cget("text"))
+            parts.append(self.format_status)
         if query := self.query.get().strip():
-            parts.append(f"Recherche « {query} »")
+            parts.append(msg("search_query", query=query))
         parts.append(results)
-        self.context_status.set("  ·  ".join(parts))
+        self.context_status.set(join("  ·  ", parts))
 
     def show_context_menu(self, event):
         if self.busy:
@@ -748,12 +785,12 @@ class App(ttk.Frame):
         menu = self.context_menu = NightMenu(self.tree, tearoff=False)
         if collection is not None:
             collection_id = collection["id"]
-            menu.add_command(label="Renommer la collection…",
+            menu.add_command(label=msg("renommer_la_collection"),
                              command=lambda: self.rename_collection(collection))
-            menu.add_command(label="Supprimer la collection…",
+            menu.add_command(label=msg("supprimer_la_collection"),
                              command=lambda: self.delete_collection(collection))
-            menu.add_command(label="Ajouter un dossier…", command=lambda: self.add_root(collection_id))
-            menu.add_command(label="Synchroniser la collection",
+            menu.add_command(label=msg("ajouter_un_dossier"), command=lambda: self.add_root(collection_id))
+            menu.add_command(label=msg("synchroniser_la_collection"),
                              command=lambda: self.synchronize(collection_id),
                              state="normal" if self.has_roots(collection_id) else "disabled")
             libraries = NightMenu(menu, tearoff=False)
@@ -762,13 +799,13 @@ class App(ttk.Frame):
                     libraries.add_command(label=label,
                                           command=lambda library=key: self.move_collection(
                                               collection_id, library))
-            menu.add_cascade(label="Rattacher à une bibliothèque", menu=libraries)
+            menu.add_cascade(label=msg("rattacher_a_une_bibliotheque"), menu=libraries)
         else:
             root = self.roots[scope[0]]
-            menu.add_command(label="Synchroniser ce dossier", command=lambda: self.start_scan(
+            menu.add_command(label=msg("synchroniser_ce_dossier"), command=lambda: self.start_scan(
                 root["collection_id"], root_id=root["id"]))
-            menu.add_command(label="Relocaliser…", command=lambda: self.relocate(root))
-            menu.add_command(label="Retirer ce dossier source…", command=lambda: self.remove_root(root))
+            menu.add_command(label=msg("relocaliser"), command=lambda: self.relocate(root))
+            menu.add_command(label=msg("retirer_ce_dossier_source"), command=lambda: self.remove_root(root))
         menu.tk_popup(event.x_root, event.y_root, keyboard=getattr(event, "keyboard", False))
 
     def show_shelf_menu(self, node, event):
@@ -776,16 +813,16 @@ class App(ttk.Frame):
             self.context_menu.destroy()
         menu = self.context_menu = NightMenu(self.tree, tearoff=False)
         if node == "shelves":
-            menu.add_command(label="Nouveau tag…", command=self.edit_tag)
+            menu.add_command(label=msg("nouveau_tag"), command=self.edit_tag)
         else:
             tag = self.shelf_items[node]
-            menu.add_command(label="Renommer le tag…", command=lambda: self.edit_tag(tag))
-            menu.add_command(label="Supprimer le tag…", command=lambda: self.remove_tag(tag))
+            menu.add_command(label=msg("renommer_le_tag"), command=lambda: self.edit_tag(tag))
+            menu.add_command(label=msg("supprimer_le_tag"), command=lambda: self.remove_tag(tag))
         menu.tk_popup(event.x_root, event.y_root, keyboard=getattr(event, "keyboard", False))
 
     def edit_tag(self, tag=None):
         name = simpledialog.askstring(
-            "Renommer le tag" if tag else "Nouveau tag", "Nom du tag", parent=self.window,
+            msg("renommer_le_tag_2") if tag else msg("nouveau_tag_2"), msg("nom_du_tag"), parent=self.window,
             initialvalue=tag["name"] if tag else "",
         )
         if name is not None and self.write_classification(
@@ -795,7 +832,7 @@ class App(ttk.Frame):
 
     def remove_tag(self, tag):
         if messagebox.askyesno(
-            "Supprimer le tag", f'Supprimer le tag « {tag["name"]} » et ses associations ?',
+            msg("supprimer_le_tag_2"), msg("delete_tag_prompt", name=tag["name"]),
             parent=self.window, default="no",
         ):
             self.write_classification(lambda: self.catalogue.delete_tag(self.library.get(), tag["id"]))
@@ -804,7 +841,7 @@ class App(ttk.Frame):
         try:
             action()
         except (ValueError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror("Classement", str(exc), parent=self.window)
+            messagebox.showerror(msg("classement"), error_text(exc), parent=self.window)
             return False
         self.load_shelves()
         if isinstance(self.shelf, int):
@@ -832,8 +869,8 @@ class App(ttk.Frame):
         for column, width in self.default_widths.items():
             minimum = self.minimum_widths[column]
             if self.text_offset > 0:
-                label = "Taille (o)" if column == "size" else self.headings[column]
-                minimum = max(minimum, face.measure(label + " ▼") + 14)
+                label = msg("taille_o") if column == "size" else self.headings[column]
+                minimum = max(minimum, face.measure(tr(self, label) + " ▼") + 14)
             self.table.column(column, minwidth=minimum, width=max(minimum, saved.get(column, width)))
 
     def result_widths(self):
@@ -864,7 +901,7 @@ class App(ttk.Frame):
         try:
             self.catalogue.save_column_widths(self.pending_widths)
         except sqlite3.Error as exc:
-            messagebox.showerror("Largeur des colonnes", str(exc), parent=self)
+            messagebox.showerror(msg("largeur_des_colonnes"), error_text(exc), parent=self)
         else:
             self.pending_widths.clear()
 
@@ -892,9 +929,9 @@ class App(ttk.Frame):
         self.sort_descending.set(descending)
         for column, label in self.headings.items():
             arrow = (" ▼" if descending else " ▲") if label == active else ""
-            display = "Taille (o)" if label == "Taille" else label
+            display = msg("taille_o") if label == msg("taille") else label
             self.table.heading(
-                column, text=display + arrow, command=lambda key=label: self.sort_by(key)
+                column, text=join("", (display, arrow)), command=lambda key=label: self.sort_by(key)
             )
 
     def move_page(self, direction):
@@ -964,9 +1001,9 @@ class App(ttk.Frame):
             self.table.focus(restored.get(active, next(iter(restored.values()))))
         self.previous.configure(state="normal" if self.page else "disabled")
         self.next.configure(state="normal" if len(rows) > PAGE_SIZE else "disabled")
-        empty = ("Aucun favori correspondant" if self.shelf == "favorites" else
-                 "Aucun résultat dans ce rayon" if self.shelf is not None else "Aucun résultat")
-        self.page_label.configure(text=f"Page {self.page + 1}" if rows else empty)
+        empty = (msg("aucun_favori_correspondant") if self.shelf == "favorites" else
+                 msg("aucun_resultat_dans_ce_rayon") if self.shelf is not None else msg("aucun_resultat"))
+        self.page_label.configure(text=msg("page", page=self.page + 1) if rows else empty)
         self.update_context_status(more=len(rows) > PAGE_SIZE)
         if self.view_mode.get() == "mosaic":
             self.show_mosaic_page()
@@ -994,11 +1031,11 @@ class App(ttk.Frame):
     def annotated_state(self, row):
         badge = self.change_badge(row)
         state = self.file_state(row)
-        return f"{badge} · {state}" if badge else state
+        return join(" · ", (badge, state)) if badge else state
 
     def result_values(self, row):
         work = self.is_work(row)
-        extension = (" · ".join(format_label(*pair) for pair in format_counts(row["members"]))
+        extension = (join(" · ", (format_label(*pair) for pair in format_counts(row["members"])))
                      if work else row["extension"].upper() if self.grouping_active() else row["extension"])
         values = (
             row["title"] if work else row["name"], row["collection_names"], extension, row["size"],
@@ -1020,9 +1057,9 @@ class App(ttk.Frame):
         if self.library.get() == self.change_library and row["state"] != "missing":
             location = self.location(row)
             if location in self.sync_changes["modified"]:
-                return "Modifié"
+                return msg("modifie")
             if location in self.sync_changes["new"]:
-                return "Nouveau"
+                return msg("nouveau")
         return ""
 
     @staticmethod
@@ -1066,7 +1103,7 @@ class App(ttk.Frame):
             mode, details = self.catalogue.view_preferences()
             self.view_mode.set(mode)
             self.details_visible.set(details)
-            messagebox.showerror("Vue des résultats", str(exc), parent=self)
+            messagebox.showerror(msg("vue_des_resultats"), error_text(exc), parent=self)
         self.apply_results_view()
         self.update_details()
         if self.view_mode.get() == "mosaic":
@@ -1121,7 +1158,7 @@ class App(ttk.Frame):
         self.select_tile(item)
         self.expanded_format = item, extension
         label = format_label(extension.upper(), len(members))
-        self.mosaic_files.show(members, f'{row["title"]} · {label} · Formats et emplacements')
+        self.mosaic_files.show(members, join(" · ", (row["title"], label, msg("formats_et_emplacements"))))
         self.mosaic_files.pack(side="bottom", fill="x", before=self.mosaic, pady=(6, 3))
 
     def close_format(self):
@@ -1173,28 +1210,29 @@ class App(ttk.Frame):
         if row:
             state = self.file_state(row)
             root_state = STATES[row["root_state"]]
-            label = (f'Collections : {row["collection_names"]}  |  Fichier : {state}'
-                     f"  |  Source au dernier inventaire : {root_state}")
-            sources = {"epub-embedded": "EPUB intégré", "pdf-embedded": "PDF intégré",
-                       "opf": "compagnon metadata.opf"}
-            metadata = [f'{title} : {row[field]} ({sources[row[f"{field}_source"]]})'
-                        for field, title in (("title", "Titre"), ("author", "Auteur(s)"))
+            label = msg("collections_file_source", collections=row["collection_names"], state=state,
+                        source=root_state)
+            sources = {"epub-embedded": msg("epub_integre"), "pdf-embedded": msg("pdf_integre"),
+                       "opf": msg("compagnon_metadata_opf")}
+            metadata = [msg("metadata_value", label=title, value=row[field], source=sources[row[f"{field}_source"]])
+                        for field, title in (("title", msg("titre")), ("author", msg("auteur_s")))
                         if row[field] and row[f"{field}_source"] in sources]
             badge = self.change_badge(row)
             if badge:
                 metadata.insert(0, badge)
             if work:
-                self.details.set(f'{row["title"]} · {len(row["members"])} fichier(s) dans cette vue')
+                self.details.set(msg("work_in_view", title=row["title"], files=plural("file_count", len(row["members"]))))
             else:
-                self.details.set("\n".join([f'Nom : {row["name"]}  |  {label}', *metadata]))
+                name = msg("label_value", label=msg("nom"), value=row["name"])
+                self.details.set(join("\n", [join("  |  ", (name, label)), *metadata]))
         else:
-            self.details.set("Sélectionnez un résultat pour afficher son chemin.")
+            self.details.set(msg("selectionnez_un_resultat_pour_afficher_son"))
         if self.details_open():
             books = self.library.get() == "books" and row is not None and row["extension"] in BOOK_EXTENSIONS
             if work:
                 tags = self.catalogue.work_classification(row["work_id"])
                 names = ", ".join(name for name, count in tags.values() if count)
-                metadata = [f"Tags de l’ouvrage : {names}"] if names else []
+                metadata = [msg("work_tags", names=names)] if names else []
                 self.detail_files.show(row["members"])
                 self.detail_files.pack(fill="x", before=self.detail_pane.cover, pady=(4, 8))
             else:
@@ -1203,8 +1241,8 @@ class App(ttk.Frame):
                 tags, favorite = self.catalogue.classification(self.library.get(), (self.location(row),))
                 names = ", ".join(name for name, count in tags.values() if count)
                 if names:
-                    metadata.append(f"Tags : {names}")
-                metadata.append("Favori" if favorite else "Hors favoris")
+                    metadata.append(msg("file_tags", names=names))
+                metadata.append(msg("favori") if favorite else msg("hors_favoris"))
             self.detail_pane.show(row, metadata, state, books, work=work)
         elif self.view_mode.get() == "mosaic":
             self.mosaic.select_item(
@@ -1221,7 +1259,7 @@ class App(ttk.Frame):
             return
         self.duplicate_window = DuplicateWindow(
             self, self.collection_id(), self.selected_extensions, self.scope,
-            self.filter_library(), self.scope_label.cget("text"),
+            self.filter_library(), self.scope_heading,
             shelf=self.personal_shelf(), locations=self.change_locations()
         )
         self.update_controls()
@@ -1247,24 +1285,24 @@ class App(ttk.Frame):
                 if menu.type(index) != "separator":
                     menu.entryconfigure(index, state=state)
         if self.scanning:
-            self.catalogue_menu.entryconfigure("Quitter", state="normal")
+            self.catalogue_menu.entryconfigure(msg("quitter"), state="normal")
         if self.at_home:
             for menu in (self.search_menu, self.display_menu):
                 for index in range(menu.index("end") + 1):
                     if menu.type(index) != "separator":
                         menu.entryconfigure(index, state="disabled")
-            self.catalogue_menu.entryconfigure("Accueil", state="disabled")
+            self.catalogue_menu.entryconfigure(msg("accueil"), state="disabled")
         for label, _, step in self.text_commands:
             enabled = active and (self.text_offset < TEXT_MAX if step > 0 else
                                   self.text_offset > TEXT_MIN if step < 0 else self.text_offset != 0)
             self.display_menu.entryconfigure(label, state="normal" if enabled else "disabled")
         if self.selected_extensions is None:
-            self.search_menu.entryconfigure("Réinitialiser le filtre", state="disabled")
+            self.search_menu.entryconfigure(msg("reinitialiser_le_filtre"), state="disabled")
         if self.view_mode.get() == "mosaic":
-            self.display_menu.entryconfigure("Volet de détails", state="disabled")
+            self.display_menu.entryconfigure(msg("volet_de_details"), state="disabled")
         if self.library.get() != "books":
-            self.display_menu.entryconfigure("Regrouper par ouvrage", state="disabled")
-        self.menubar.buttons["Bibliothèques"].configure(state=state)
+            self.display_menu.entryconfigure(msg("regrouper_par_ouvrage"), state="disabled")
+        self.menubar.buttons[msg("bibliotheques")].configure(state=state)
         for label, _ in LIBRARIES.values():
             self.library_menu.entryconfigure(label, state=state)
 
@@ -1282,16 +1320,16 @@ class App(ttk.Frame):
         try:
             self.catalogue.move_collection(collection, library)
             self.load_roots(keep_scope=True)
-            self.status.set(f'Collection rattachée à « {LIBRARIES[library][0]} ».')
+            self.status.set(msg("collection_moved", library=LIBRARIES[library][0]))
         except (ValueError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror("Rattacher la collection", str(exc), parent=self)
+            messagebox.showerror(msg("rattacher_la_collection"), error_text(exc), parent=self)
 
     def edit_collection_name(self, collection=None):
         if self.busy:
             return
-        title = "Renommer la collection" if collection else "Nouvelle collection"
+        title = msg("renommer_la_collection_2") if collection else msg("nouvelle_collection_2")
         name = simpledialog.askstring(
-            title, "Nom de la collection", initialvalue=collection["name"] if collection else "",
+            title, msg("nom_de_la_collection"), initialvalue=collection["name"] if collection else "",
             parent=self,
         )
         if name is None:
@@ -1305,19 +1343,18 @@ class App(ttk.Frame):
                 self.show_workspace()
                 self.load_collections(selected)
         except sqlite3.IntegrityError:
-            messagebox.showerror(title, "Ce nom de collection est déjà utilisé.", parent=self)
+            messagebox.showerror(title, msg("ce_nom_de_collection_est_deja_utilise"), parent=self)
         except (ValueError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror(title, str(exc), parent=self)
+            messagebox.showerror(title, error_text(exc), parent=self)
 
     def delete_collection(self, collection=None):
         collection = self.active_collection if collection is None else collection
         if self.busy or collection is None:
             return
-        title = "Supprimer la collection"
+        title = msg("supprimer_la_collection_2")
         if not messagebox.askyesno(
             title,
-            f'Voulez-vous supprimer « {collection["name"]} » du catalogue local ?\n\n'
-            "Les dossiers et les fichiers resteront à leur emplacement sur le disque.",
+            msg("delete_collection_prompt", name=collection["name"]),
             parent=self, default="no",
         ):
             return
@@ -1329,9 +1366,9 @@ class App(ttk.Frame):
                 self.load_collections(next_id)
             else:
                 self.load_roots(keep_scope=True)
-            self.status.set("Collection supprimée du catalogue local.")
+            self.status.set(msg("collection_supprimee_du_catalogue_local"))
         except (ValueError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror(title, str(exc), parent=self)
+            messagebox.showerror(title, error_text(exc), parent=self)
 
     def selected_root(self):
         if self.scope and not self.scope[1]:
@@ -1342,35 +1379,33 @@ class App(ttk.Frame):
         root = self.selected_root() if root is None else root
         if self.busy or root is None:
             return
-        title = "Retirer ce dossier source"
+        title = msg("retirer_ce_dossier_source_2")
         if not messagebox.askyesno(
             title,
-            f'Voulez-vous retirer cette racine de la collection ?\n\n{root["path"]}\n\n'
-            "Le retrait concerne le catalogue local. Les dossiers et les fichiers "
-            "resteront à leur emplacement sur le disque.",
+            msg("remove_source_prompt", path=root["path"]),
             parent=self, default="no",
         ):
             return
         try:
             self.catalogue.remove_root(root["collection_id"], root["id"])
             self.load_roots(keep_scope=True)
-            self.status.set("Dossier retiré de la collection.")
+            self.status.set(msg("dossier_retire_de_la_collection"))
         except (ValueError, OSError, sqlite3.Error) as exc:
-            messagebox.showerror(title, str(exc), parent=self)
+            messagebox.showerror(title, error_text(exc), parent=self)
 
     def add_root(self, collection=None):
         collection = self.collection_id() if collection is None else collection
         if self.busy or collection is None:
             return
-        folder = filedialog.askdirectory(parent=self, title="Ajouter un dossier source", mustexist=True)
+        folder = file_dialog(filedialog.askdirectory, parent=self, title=msg("ajouter_un_dossier_source"), mustexist=True)
         if folder:
             try:
                 root_id = self.catalogue.add_root(collection, folder)
                 self.start_scan(collection, root_id=root_id)
             except sqlite3.IntegrityError:
-                messagebox.showerror("Source", "Ce dossier est déjà dans la collection.", parent=self)
+                messagebox.showerror(msg("source"), msg("ce_dossier_est_deja_dans_la_collection"), parent=self)
             except (OSError, ValueError, sqlite3.Error) as exc:
-                messagebox.showerror("Source", str(exc), parent=self)
+                messagebox.showerror(msg("source"), error_text(exc), parent=self)
 
     def relocate(self, root=None):
         if self.busy:
@@ -1381,16 +1416,16 @@ class App(ttk.Frame):
             root = self.roots.get(root_id)
         if root is None:
             return
-        folder = filedialog.askdirectory(
-            parent=self, title="Choisir le dossier d’origine sur son volume", mustexist=True
+        folder = file_dialog(filedialog.askdirectory,
+            parent=self, title=msg("choisir_le_dossier_dorigine_sur_son_volume"), mustexist=True
         )
         if folder:
             try:
                 self.catalogue.relocate(root, folder)
                 self.load_roots(keep_scope=True)
-                self.status.set("Source relocalisée. Lancez Synchroniser pour actualiser son état.")
+                self.status.set(msg("source_relocalisee_lancez_synchroniser_pour"))
             except (OSError, ValueError) as exc:
-                messagebox.showerror("Relocalisation", str(exc), parent=self)
+                messagebox.showerror(msg("relocalisation"), error_text(exc), parent=self)
 
     def show_file_menu(self, event):
         self.file_menu = self.post_file_menu(self.table, self.rows | self.child_rows, self.file_menu, event)
@@ -1429,12 +1464,12 @@ class App(ttk.Frame):
             candidates = [target for target in targets
                           if self.is_work(target) or target["extension"] in BOOK_EXTENSIONS]
             if len(candidates) > 1:
-                menu.add_command(label=f"Regrouper la sélection… ({len(candidates)})",
+                menu.add_command(label=msg("group_selection", count=len(candidates)),
                                  command=lambda: self.combine_work(row, candidates))
                 menu.add_separator()
         if not work:
-            menu.add_command(label="Copier le chemin", command=lambda: self.copy_path(row))
-            menu.add_command(label="Afficher dans l’Explorateur",
+            menu.add_command(label=msg("copier_le_chemin"), command=lambda: self.copy_path(row))
+            menu.add_command(label=msg("afficher_dans_lexplorateur"),
                              command=lambda: self.show_in_explorer(row, widget.winfo_toplevel()))
         if actionable and not work:
             self.add_classification_menu(menu, targets)
@@ -1455,19 +1490,19 @@ class App(ttk.Frame):
         library = self.library.get()
         tags, favorites = self.catalogue.classification(library, locations)
         count = len(locations)
-        suffix = f" ({count} fichiers)" if count > 1 else ""
+        suffix = join("", (" (", plural("file_count", count), ")")) if count > 1 else ""
         menu.add_separator()
-        menu.add_command(label=f"Gérer les tags…{suffix}", command=lambda: TagDialog(
+        menu.add_command(label=join("", (msg("gerer_les_tags"), suffix)), command=lambda: TagDialog(
             self.window, tags, count, lambda changes, new: self.write_classification(
                 lambda: self.catalogue.classify(library, locations, changes, new)
             )
         ))
         for label, favorite, useful in (
-            ("Ajouter aux favoris", True, favorites < count),
-            ("Retirer des favoris", False, favorites > 0),
+            (msg("ajouter_aux_favoris"), True, favorites < count),
+            (msg("retirer_des_favoris"), False, favorites > 0),
         ):
             if useful:
-                menu.add_command(label=label + suffix, command=lambda value=favorite: self.write_classification(
+                menu.add_command(label=join("", (label, suffix)), command=lambda value=favorite: self.write_classification(
                     lambda: self.catalogue.set_favorites(library, locations, value)
                 ))
 
@@ -1477,23 +1512,23 @@ class App(ttk.Frame):
             self.catalogue.save_groups_enabled(enabled)
         except (OSError, sqlite3.Error) as exc:
             self.grouped_books.set(not enabled)
-            messagebox.showerror("Regroupement", str(exc), parent=self.window)
+            messagebox.showerror(msg("regroupement"), error_text(exc), parent=self.window)
             return
         self.refresh_results()
 
     def add_work_menu(self, menu, row):
         work = self.is_work(row)
         if work:
-            menu.add_command(label="Gérer les tags de l’ouvrage…", command=lambda: self.edit_work_tags(row))
-            menu.add_command(label="Fusionner avec un ouvrage…", command=lambda: self.pick_work(row))
+            menu.add_command(label=msg("gerer_les_tags_de_louvrage"), command=lambda: self.edit_work_tags(row))
+            menu.add_command(label=msg("fusionner_avec_un_ouvrage"), command=lambda: self.pick_work(row))
         else:
             menu.add_separator()
-            menu.add_command(label="Proposer un regroupement…", command=lambda: self.propose_work(row))
-            menu.add_command(label="Ajouter à un ouvrage…", command=lambda: self.pick_work(row))
+            menu.add_command(label=msg("proposer_un_regroupement"), command=lambda: self.propose_work(row))
+            menu.add_command(label=msg("ajouter_a_un_ouvrage"), command=lambda: self.pick_work(row))
             membership = self.catalogue.work_at(self.location(row))
             if membership:
                 work_id = membership["work_id"]
-                menu.add_command(label="Retirer ce fichier de l’ouvrage", command=lambda: self.write_classification(
+                menu.add_command(label=msg("retirer_ce_fichier_de_louvrage"), command=lambda: self.write_classification(
                     lambda: self.catalogue.remove_work_member(work_id, self.location(row))
                 ))
 
@@ -1503,14 +1538,14 @@ class App(ttk.Frame):
             self.window, self.catalogue.work_classification(work_id), 1,
             lambda changes, new: self.write_classification(
                 lambda: self.catalogue.classify_work(work_id, changes, new)
-            ), subject=f'Ouvrage · {row["title"]}',
+            ), subject=msg("work_title", title=row["title"]),
         )
 
     def propose_work(self, row):
         candidates = self.catalogue.suggested_editions(row)
         if not candidates:
             messagebox.showinfo(
-                "Regroupement", "Aucun rapprochement titre-auteurs dans plusieurs formats.", parent=self.window
+                msg("regroupement"), msg("aucun_rapprochement_titre_auteurs_dans"), parent=self.window
             )
             return
         chosen = ProposalDialog(self.window, row["title"], candidates).result
@@ -1521,10 +1556,10 @@ class App(ttk.Frame):
         source = row["work_id"] if self.is_work(row) else None
         works = [work for work in self.catalogue.works() if work["id"] != source]
         if not works:
-            messagebox.showinfo("Regroupement", "Aucun autre ouvrage disponible.", parent=self.window)
+            messagebox.showinfo(msg("regroupement"), msg("aucun_autre_ouvrage_disponible"), parent=self.window)
             return
         target = WorkPicker(
-            self.window, works, "Fusionner avec un ouvrage" if source else "Ajouter à un ouvrage"
+            self.window, works, msg("fusionner_avec_un_ouvrage_2") if source else msg("ajouter_a_un_ouvrage_2")
         ).result
         if target is not None:
             self.combine_work(row, [row], target=target)
@@ -1537,19 +1572,18 @@ class App(ttk.Frame):
         try:
             preview = self.catalogue.preview_work(locations, work_ids)
         except (ValueError, sqlite3.Error) as exc:
-            messagebox.showerror("Regroupement", str(exc), parent=self.window)
+            messagebox.showerror(msg("regroupement"), error_text(exc), parent=self.window)
             return
         title = row["title"] or Path(row["name"]).stem
         if preview:
             if target is None:
                 target = row["work_id"] if self.is_work(row) else preview[0][0]
             destination = next(name for work_id, name, _ in preview if work_id == target)
-            lines = "\n".join(f"• {name} · {count} fichier(s)" for _, name, count in preview)
+            lines = join("\n", (join("", ("• ", name, " · ", plural("file_count", count)))
+                                for _, name, count in preview))
             if not messagebox.askyesno(
-                "Valider le regroupement",
-                f"Fiche finale « {destination} »\n\nOuvrages concernés\n{lines}\n\n"
-                f"Fichiers sélectionnés individuellement · {len(locations)}\n"
-                "Les tags des ouvrages réunis seront conservés. Continuer ?",
+                msg("valider_le_regroupement"),
+                msg("grouping_prompt", title=destination, works=lines, files=len(locations)),
                 default="no", parent=self.window,
             ):
                 return
@@ -1560,7 +1594,7 @@ class App(ttk.Frame):
     def copy_path(self, row):
         self.clipboard_clear()
         self.clipboard_append(row["full_path"])
-        self.status.set("Chemin copié.")
+        self.status.set(msg("chemin_copie"))
 
     def show_in_explorer(self, row, parent=None):
         try:
@@ -1569,7 +1603,7 @@ class App(ttk.Frame):
             )
             select_in_explorer(target)
         except OSError as exc:
-            messagebox.showerror("Explorateur Windows", str(exc), parent=parent or self)
+            messagebox.showerror(msg("explorateur_windows"), error_text(exc), parent=parent or self)
 
     def synchronize(self, collection=None):
         collection = self.collection_id() if collection is None else collection
@@ -1583,7 +1617,7 @@ class App(ttk.Frame):
         self.errors = []
         self.error_button.state(["disabled"])
         self.scan_window = ScanWindow(self.window)
-        self.status.set("Synchronisation en cours…")
+        self.status.set(msg("synchronisation_en_cours"))
         self.update_controls()
         library = self.library.get()
 
@@ -1595,7 +1629,7 @@ class App(ttk.Frame):
                 )
                 self.events.put(("done", (library, summary)))
             except Exception as exc:
-                self.events.put(("failed", str(exc) or type(exc).__name__))
+                self.events.put(("failed", error_text(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
         self.scan_poll = self.after(75, self.poll_scan)
@@ -1605,9 +1639,8 @@ class App(ttk.Frame):
         while not self.events.empty():
             event, data = self.events.get_nowait()
             if event == "progress":
-                self.scan_window.show_progress(data)
-                count = self.scan_window.count.cget("text")
-                self.status.set(f"Synchronisation · source {data.position}/{data.total} · {count}")
+                examined = self.scan_window.show_progress(data)
+                self.status.set(msg("scan_progress", position=data.position, total=data.total, examined=examined))
                 continue
             if event == "done":
                 library, data = data
@@ -1615,14 +1648,13 @@ class App(ttk.Frame):
                     self.change_library = library
                     self.sync_changes = {"new": data.new_files, "modified": data.modified_files}
                 self.errors = data.errors
-                self.status.set(
-                    f"Synchronisation terminée · {len(data.added)} ajout(s) · "
-                    f"{len(data.changed)} changement(s) · {len(data.missing)} absence(s) · "
-                    f"{len(data.errors)} erreur(s)"
-                )
+                self.status.set(msg("scan_done", added=plural("scan_added", len(data.added)),
+                                    changed=plural("scan_changed", len(data.changed)),
+                                    missing=plural("scan_missing", len(data.missing)),
+                                    errors=plural("scan_errors", len(data.errors))))
             else:
                 self.errors = [data]
-                self.status.set("Synchronisation interrompue.")
+                self.status.set(msg("synchronisation_interrompue"))
             self.scanning = False
             self.scan_window.destroy()
             self.scan_window = None
@@ -1635,50 +1667,49 @@ class App(ttk.Frame):
     def save_catalogue(self):
         if self.busy:
             return
-        filename = filedialog.asksaveasfilename(
-            parent=self, title="Sauvegarder le catalogue", defaultextension=".sqlite3",
+        filename = file_dialog(filedialog.asksaveasfilename,
+            parent=self, title=msg("sauvegarder_le_catalogue_2"), defaultextension=".sqlite3",
             initialfile=f"ma-librarie-{datetime.now():%Y-%m-%d_%H-%M-%S}.sqlite3",
-            filetypes=[("Sauvegarde Ma Librarie", "*.sqlite3"), ("Tous les fichiers", "*.*")],
+            filetypes=[(msg("sauvegarde_ma_librarie"), "*.sqlite3"), (msg("tous_les_fichiers"), "*.*")],
             confirmoverwrite=False,
         )
         if not filename:
             return
         overwrite = Path(filename).exists()
         if overwrite and not messagebox.askyesno(
-            "Sauvegarder le catalogue", f"Remplacer le fichier « {Path(filename).name} » ?",
+            msg("sauvegarder_le_catalogue_2"), msg("replace_backup_prompt", name=Path(filename).name),
             parent=self, default="no"
         ):
             return
         self.run_catalogue_task(
-            "Sauvegarde du catalogue…",
+            msg("sauvegarde_du_catalogue"),
             lambda: save_backup(self.catalogue, filename, overwrite=overwrite),
-            lambda path: self.status.set(f"Sauvegarde créée — {path}"),
+            lambda path: self.status.set(msg("backup_created", path=path)),
         )
 
     def restore_catalogue(self):
         if self.busy:
             return
-        filename = filedialog.askopenfilename(
-            parent=self, title="Restaurer une sauvegarde",
-            filetypes=[("Sauvegarde Ma Librarie", "*.sqlite3"), ("Tous les fichiers", "*.*")],
+        filename = file_dialog(filedialog.askopenfilename,
+            parent=self, title=msg("restaurer_une_sauvegarde_2"),
+            filetypes=[(msg("sauvegarde_ma_librarie"), "*.sqlite3"), (msg("tous_les_fichiers"), "*.*")],
         )
         if filename:
             self.run_catalogue_task(
-                "Validation de la sauvegarde…",
+                msg("validation_de_la_sauvegarde"),
                 lambda: prepare_restore(self.catalogue, filename),
                 self.confirm_restore,
             )
 
     def confirm_restore(self, prepared):
         if not messagebox.askyesno(
-            "Restaurer une sauvegarde",
-            f"« {prepared.name} »\n{prepared.collections} collection(s), {prepared.roots} source(s).\n\n"
-            "Le catalogue courant sera remplacé. Une copie de sécurité de son état actuel sera créée.\n\n"
-            "Restaurer cette sauvegarde ?",
+            msg("restaurer_une_sauvegarde_2"),
+            msg("restore_prompt", name=prepared.name, collections=plural("collection_count", prepared.collections),
+                sources=plural("source_count", prepared.roots)),
             parent=self, default="no"
         ):
             prepared.close()
-            self.status.set("Restauration annulée.")
+            self.status.set(msg("restauration_annulee"))
             return
 
         def restore():
@@ -1687,18 +1718,18 @@ class App(ttk.Frame):
             finally:
                 prepared.close()
 
-        self.run_catalogue_task("Restauration du catalogue…", restore, self.reload_restored_catalogue)
+        self.run_catalogue_task(msg("restauration_du_catalogue"), restore, self.reload_restored_catalogue)
 
     def run_catalogue_task(self, caption, work, success):
         self.archive_running = True
         self.status.set(caption)
         self.update_controls()
         progress = NightWindow(self.window)
-        progress.title("Catalogue")
+        progress.title(msg("catalogue"))
         progress.transient(self.window)
         progress.resizable(False, False)
         progress.protocol("WM_DELETE_WINDOW", lambda: None)
-        ttk.Label(progress, text=caption, padding=12).pack()
+        Label(progress, text=caption, padding=12).pack()
         bar = ttk.Progressbar(progress, mode="indeterminate", length=270)
         bar.pack(padx=12, pady=(0, 12))
         bar.start()
@@ -1712,7 +1743,7 @@ class App(ttk.Frame):
             try:
                 replies.put((True, work()))
             except Exception as exc:
-                replies.put((False, str(exc) or type(exc).__name__))
+                replies.put((False, error_text(exc)))
 
         def poll():
             try:
@@ -1727,8 +1758,8 @@ class App(ttk.Frame):
             if ok:
                 success(result)
             else:
-                self.status.set(f"Opération interrompue — {result}")
-                messagebox.showerror("Catalogue", result, parent=self)
+                self.status.set(msg("operation_interrupted", error=result))
+                messagebox.showerror(msg("catalogue"), result, parent=self)
 
         threading.Thread(target=worker, daemon=True).start()
         self.after(50, poll)
@@ -1738,9 +1769,10 @@ class App(ttk.Frame):
         self.sync_changes.clear()
         self.errors = []
         self.error_button.state(["disabled"])
-        self.sort = "Nom", False
+        self.sort = msg("nom"), False
         self.update_headings()
         self.apply_text_offset(max(TEXT_MIN, min(TEXT_MAX, self.catalogue.text_offset())))
+        self.apply_language(language_code(self.catalogue.ui_language()))
         self.library.set(UNCLASSIFIED if self.catalogue.collections(UNCLASSIFIED) else "books")
         mode, details = self.catalogue.view_preferences()
         self.view_mode.set(mode)
@@ -1752,19 +1784,17 @@ class App(ttk.Frame):
         self.load_collections()
         self.apply_results_view()
         self.update_details()
-        self.status.set(f"Catalogue restauré. Copie de sécurité — {safety}")
+        self.status.set(msg("catalogue_restored", path=safety))
 
     def show_errors(self):
         window = NightWindow(self)
-        window.title("Erreurs de synchronisation")
+        window.title(msg("erreurs_de_synchronisation"))
         window.transient(self.window)
-        text = tk.Text(window, width=96, height=18, wrap="word", **FIELD_COLORS)
+        text = ReadOnlyText(window, join("\n\n", self.errors), width=96, height=18, wrap="word", **FIELD_COLORS)
         scroll = ttk.Scrollbar(window, command=text.yview)
         text.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         text.pack(side="left", fill="both", expand=True)
-        text.insert("1.0", "\n\n".join(self.errors))
-        text.configure(state="disabled")
 
     def destroy(self):
         self.window.unbind("<Control-KeyPress>", self.text_binding)
@@ -1781,14 +1811,14 @@ class App(ttk.Frame):
             self.duplicate_window.request_close()
             return
         if not self.scanning or messagebox.askyesno(
-                "Synchronisation en cours", "Fermer pendant la synchronisation ?", parent=self):
+                msg("synchronisation_en_cours_2"), msg("fermer_pendant_la_synchronisation"), parent=self):
             self.flush_column_widths()
             self.window.destroy()
 
 
 def main():
     if os.name != "nt":
-        raise SystemExit("Ma Librarie nécessite Windows.")
+        raise SystemExit(msg("ma_librarie_necessite_windows"))
     window = tk.Tk()
     use_theme(window)
     window.title(APP_NAME)
@@ -1802,7 +1832,7 @@ def main():
     except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
         if session is not None:
             session.close()
-        messagebox.showerror("Ma Librarie", f"Impossible d’ouvrir le catalogue : {exc}", parent=window)
+        messagebox.showerror("Ma Librarie", msg("catalogue_open_error", error=error_text(exc)), parent=window)
         window.destroy()
         return
     try:

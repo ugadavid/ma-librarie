@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from .localized import Button, Label, locale, tr
+from .i18n import msg
 from .chrome import tint_title
 from .night import GOLD, INK, LINE, PANEL, SELECTED, TEAL, TEXT
 
@@ -19,6 +21,18 @@ class NightWindow(tk.Toplevel):
         self.modal = False
         super().__init__(parent, background=INK)
         self.bind("<Map>", self.tint)
+        self._caption = None
+        locale(self).widgets.add(self)
+
+    def title(self, title=None):
+        if title is not None:
+            self._caption = title
+            title = tr(self, title)
+        return super().title(title)
+
+    def translate(self):
+        if self._caption is not None:
+            super().title(tr(self, self._caption))
 
     def tint(self, event):
         if event.widget is self:
@@ -64,7 +78,7 @@ class Dialog(NightWindow):
 
         frame = ttk.Frame(self, padding=14)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=title, style="Night.Title.TLabel").pack(anchor="w", pady=(0, 10))
+        Label(frame, text=title, style="Night.Title.TLabel").pack(anchor="w", pady=(0, 10))
         content = ttk.Frame(frame)
         content.pack(fill="both", expand=True)
         focus = self.body(content)
@@ -78,9 +92,9 @@ class Dialog(NightWindow):
         self.wait_window()
 
     def buttonbox(self, parent):
-        apply = ttk.Button(parent, text="Valider", style="Night.Primary.TButton", command=self.ok)
+        apply = Button(parent, text=msg("valider"), style="Night.Primary.TButton", command=self.ok)
         apply.pack(side="right")
-        ttk.Button(parent, text="Annuler", command=self.cancel).pack(side="right", padx=(0, 6))
+        Button(parent, text=msg("annuler"), command=self.cancel).pack(side="right", padx=(0, 6))
         return apply
 
     def validate(self):
@@ -106,7 +120,7 @@ class TextPrompt(Dialog):
         super().__init__(parent, title)
 
     def body(self, parent):
-        ttk.Label(parent, text=self.prompt, wraplength=450).pack(anchor="w", pady=(0, 5))
+        Label(parent, text=self.prompt, wraplength=450).pack(anchor="w", pady=(0, 5))
         self.entry = ttk.Entry(parent, width=42)
         self.entry.pack(fill="x")
         self.entry.insert(0, self.initialvalue)
@@ -126,29 +140,29 @@ class Notice(Dialog):
         super().__init__(parent, title)
 
     def body(self, parent):
-        labels = {"error": "Erreur", "info": "Information", "question": "Confirmation"}
-        ttk.Label(parent, text=labels[self.kind], foreground=GOLD).pack(anchor="w", pady=(0, 5))
+        labels = {"error": msg("erreur"), "info": msg("information"), "question": msg("confirmation")}
+        Label(parent, text=labels[self.kind], foreground=GOLD).pack(anchor="w", pady=(0, 5))
         if self.message.count("\n") > 12 or len(self.message) > 750:
             text = tk.Text(parent, width=64, height=12, wrap="word", **FIELD_COLORS)
             scroll = ttk.Scrollbar(parent, command=text.yview)
             text.configure(yscrollcommand=scroll.set)
             scroll.pack(side="right", fill="y")
             text.pack(side="left", fill="both", expand=True)
-            text.insert("end", self.message)
+            text.insert("end", tr(self, self.message))
             text.configure(state="disabled")
         else:
-            ttk.Label(parent, text=self.message, justify="left", wraplength=490).pack(anchor="w")
+            Label(parent, text=self.message, justify="left", wraplength=490).pack(anchor="w")
 
     def buttonbox(self, parent):
         if self.kind == "question":
-            no = ttk.Button(parent, text="Non", command=self.cancel)
-            yes = ttk.Button(parent, text="Oui", command=self.accept)
+            no = Button(parent, text=msg("non"), command=self.cancel)
+            yes = Button(parent, text=msg("oui"), command=self.accept)
             no.pack(side="right")
             yes.pack(side="right", padx=(0, 6))
             no.bind("<Return>", lambda _event: invoke(no))
             yes.bind("<Return>", lambda _event: invoke(yes))
             return no if self.default == "no" else yes
-        okay = ttk.Button(parent, text="OK", command=self.accept, style="Night.Primary.TButton")
+        okay = Button(parent, text="OK", command=self.accept, style="Night.Primary.TButton")
         okay.pack(side="right")
         return okay
 

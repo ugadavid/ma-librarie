@@ -2,6 +2,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import font, ttk
 
+from .localized import Button, Label
+from .i18n import join, msg
 from . import APP_NAME
 
 try:
@@ -146,14 +148,14 @@ class Home(ttk.Frame):
         identity = ttk.Frame(hero, padding=(14, 2))
         identity.grid(row=0, column=1)
         Art(identity, "emblem", width=62, height=50).pack()
-        ttk.Label(identity, text=APP_NAME, font="NightHero").pack(pady=(4, 2))
-        ttk.Label(identity, text="A R C H I V E S   N O C T U R N E S", style="Night.Note.TLabel").pack()
+        Label(identity, text=APP_NAME, font="NightHero").pack(pady=(4, 2))
+        Label(identity, text=msg("a_r_c_h_i_v_e_s_n_o_c_t_u_r_n_e_s"), style="Night.Note.TLabel").pack()
         doors = ttk.Frame(self)
         doors.pack(fill="both", expand=True)
         doors.rowconfigure(0, weight=1)
         self.buttons = {}
-        for column, (library, title) in enumerate((("books", "Livres"), ("movies", "Films"),
-                                                    ("music", "Musiques"))):
+        for column, (library, title) in enumerate((("books", msg("livres")), ("movies", msg("films")),
+                                                    ("music", msg("musiques")))):
             doors.columnconfigure(column, weight=1, uniform="doors")
             edge = tk.Frame(doors, background=GOLD, padx=1, pady=1)
             edge.grid(row=0, column=column, sticky="nsew", padx=5)
@@ -163,7 +165,7 @@ class Home(ttk.Frame):
             scene = Art(edge, f"door-{library}")
             scene.grid(row=0, column=0, sticky="nsew")
             scene.configure(cursor="hand2")
-            button = ttk.Button(edge, text=f"{title}   ›", style="Night.Door.TButton",
+            button = Button(edge, text=join("   ", (title, "›")), style="Night.Door.TButton",
                                 command=lambda key=library: navigate(key))
             button.grid(row=1, column=0, sticky="nsew")
             button.bind("<Return>", lambda _event, control=button: control.invoke())

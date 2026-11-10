@@ -4,7 +4,14 @@ import tkinter as tk
 from ctypes import wintypes
 from tkinter import font
 
+from .localized import locale, tr
 from .night import GOLD, INK, LINE, MUTED, SELECTED, TEAL, TEXT
+
+
+POPUP_MNEMONICS = {
+    "en": {"musiques": "s"},
+    "es": {"about": "c"},
+}
 
 
 class MonitorInfo(ctypes.Structure):
@@ -34,6 +41,13 @@ class NightMenu(tk.Menu):
     def __init__(self, parent, **options):
         super().__init__(parent, **options)
         self.popup = None
+        self.labels = {}
+
+    def add(self, itemType, cnf=None, **options):
+        options = (cnf or {}) | options
+        super().add(itemType, **options)
+        if "label" in options:
+            self.labels[self.index("end")] = options["label"]
 
     def tk_popup(self, x, y, *, keyboard=False, on_close=None, switch=None, hover_switch=None):
         owner = self.master.winfo_toplevel()
@@ -201,6 +215,7 @@ class Level:
         self.positions = {}
         self.enabled = []
         self.labels = {}
+        self.underlines = {}
         self.accelerators = {}
         top = 4
         for index in range((model.index("end") if model.index("end") is not None else -1) + 1):
@@ -209,7 +224,11 @@ class Level:
             self.positions[index] = top, top + height
             top += height
             if kind != "separator":
-                self.labels[index] = model.entrycget(index, "label")
+                source = model.labels.get(index, model.entrycget(index, "label"))
+                label = self.labels[index] = tr(popup.owner, source)
+                underline = int(model.entrycget(index, "underline"))
+                key = POPUP_MNEMONICS.get(locale(popup.owner).code, {}).get(getattr(source, "key", None))
+                self.underlines[index] = label.lower().index(key) if key and underline >= 0 else underline
                 self.accelerators[index] = model.entrycget(index, "accelerator")
                 if model.entrycget(index, "state") != "disabled":
                     self.enabled.append(index)
@@ -248,7 +267,7 @@ class Level:
             self.canvas.create_text(16, middle, text=mark, fill=GOLD if index in self.enabled else color,
                                     font=self.popup.face)
             self.canvas.create_text(30, middle, anchor="w", text=self.labels[index], fill=color,
-                                    underline=int(self.model.entrycget(index, "underline")), font=self.popup.face)
+                                    underline=self.underlines[index], font=self.popup.face)
             if accelerator := self.accelerators[index]:
                 self.canvas.create_text(self.width - 18, middle, anchor="e", text=accelerator,
                                         fill=MUTED, font=self.popup.face)
@@ -319,7 +338,7 @@ class Level:
         elif event.char:
             for index in self.enabled:
                 label = self.labels[index]
-                letter = int(self.model.entrycget(index, "underline"))
+                letter = self.underlines[index]
                 if 0 <= letter < len(label) and label[letter].casefold() == event.char.casefold():
                     self.select(index)
                     self.invoke()

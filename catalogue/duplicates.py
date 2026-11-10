@@ -6,15 +6,16 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from .i18n import error_text, msg
 from .windows import SourceProblem, verified_file
 
 
 BLOCK_SIZE = 1024 * 1024
 ISSUE_LABELS = {
-    "offline": "Hors ligne",
-    "missing": "Absents",
-    "error": "Illisibles",
-    "changed": "Modifiés pendant la vérification",
+    "offline": msg("hors_ligne"),
+    "missing": msg("absents"),
+    "error": msg("illisibles"),
+    "changed": msg("modifies_pendant_la_verification"),
 }
 
 
@@ -57,7 +58,7 @@ def identity(row):
 
 
 def changed(row):
-    return ReadProblem(row, "changed", "Le fichier a changé pendant la vérification.")
+    return ReadProblem(row, "changed", msg("le_fichier_a_change_pendant_la_verification"))
 
 
 @contextmanager
@@ -66,7 +67,7 @@ def checked_reader(row, expected=None):
     try:
         source, target, info = verified_file(*args)
         if info.st_dev != Path(source.volume).stat().st_dev:
-            raise ReadProblem(row, "error", "Le fichier est sur un autre volume.")
+            raise ReadProblem(row, "error", msg("le_fichier_est_sur_un_autre_volume"))
         path_signature = signature(info)
         with target.open("rb") as stream:
             opened = os.fstat(stream.fileno())
@@ -87,11 +88,11 @@ def checked_reader(row, expected=None):
         if expected is not None and exc.state == "missing":
             raise changed(row) from exc
         category = exc.state if exc.state in ("offline", "missing") else "error"
-        raise ReadProblem(row, category, str(exc)) from exc
+        raise ReadProblem(row, category, error_text(exc)) from exc
     except FileNotFoundError as exc:
         raise changed(row) from exc
     except OSError as exc:
-        raise ReadProblem(row, "error", str(exc)) from exc
+        raise ReadProblem(row, "error", error_text(exc)) from exc
 
 
 def read_block(stream, row):
@@ -99,7 +100,7 @@ def read_block(stream, row):
         return stream.read(BLOCK_SIZE)
     except OSError as exc:
         # Keep the failing side when two files are open for comparison.
-        raise ReadProblem(row, "error", str(exc)) from exc
+        raise ReadProblem(row, "error", error_text(exc)) from exc
 
 
 def hash_copy(copy, check):
@@ -206,7 +207,7 @@ class DuplicateCheck:
             locations[identity(row)].append(row)
 
         sizes = defaultdict(list)
-        advance = self.meter("Vérification des chemins", len(locations))
+        advance = self.meter(msg("verification_des_chemins"), len(locations))
         for aliases in locations.values():
             copy = self.inspect(aliases)
             if copy is not None:
@@ -215,7 +216,7 @@ class DuplicateCheck:
 
         candidates = [copy for copies in sizes.values() if len(copies) > 1 for copy in copies]
         fingerprints = defaultdict(list)
-        advance = self.meter("Calcul des empreintes SHA-256", len(candidates))
+        advance = self.meter(msg("calcul_des_empreintes_sha_256"), len(candidates))
         for copy in candidates:
             self.check()
             try:
@@ -225,13 +226,13 @@ class DuplicateCheck:
             advance()
 
         buckets = [copies for copies in fingerprints.values() if len(copies) > 1]
-        advance = self.meter("Comparaison des contenus", sum(map(len, buckets)))
+        advance = self.meter(msg("comparaison_des_contenus"), sum(map(len, buckets)))
         groups = []
         for bucket in buckets:
             groups.extend(compare_bucket(bucket, self.check, self.record_issue, advance))
 
         inspected = [copy for copies in sizes.values() for copy in copies]
-        advance = self.meter("Contrôle final de la stabilité", len(inspected))
+        advance = self.meter(msg("controle_final_de_la_stabilite"), len(inspected))
         for copy in inspected:
             self.check()
             if identity(copy.row) not in self.issues:

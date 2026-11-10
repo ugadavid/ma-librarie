@@ -5,6 +5,7 @@ from pathlib import Path
 from unicodedata import normalize
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
+from .i18n import error_text, msg
 
 try:
     from pypdf import PdfReader, apply_configuration
@@ -28,17 +29,17 @@ class MetadataError(ValueError):
 
 class MetadataTree(ElementTree.TreeBuilder):
     def doctype(self, name, pubid, system):
-        raise MetadataError("Déclaration DTD ignorée.")
+        raise MetadataError(msg("declaration_dtd_ignoree"))
 
 
 def read_xml(stream):
     data = stream.read(XML_LIMIT + 1)
     if len(data) > XML_LIMIT:
-        raise MetadataError("Métadonnées XML trop volumineuses.")
+        raise MetadataError(msg("metadonnees_xml_trop_volumineuses"))
     try:
         return ElementTree.fromstring(data, parser=ElementTree.XMLParser(target=MetadataTree()))
     except ElementTree.ParseError as exc:
-        raise MetadataError(str(exc)) from exc
+        raise MetadataError(error_text(exc)) from exc
 
 
 def clean(value):
@@ -64,10 +65,10 @@ def epub_package(book):
     with book.open("META-INF/container.xml") as container:
         package = read_xml(container).find(f".//{{{PACKAGE_NS}}}rootfile")
     if package is None:
-        raise MetadataError("Paquet EPUB introuvable.")
+        raise MetadataError(msg("paquet_epub_introuvable"))
     name = package.attrib["full-path"]
     if any(part in ("", ".", "..") for part in name.split("/")) or ":" in name or "\\" in name:
-        raise MetadataError("Référence de paquet EPUB non locale.")
+        raise MetadataError(msg("reference_de_paquet_epub_non_locale"))
     with book.open(name) as opf:
         return name, read_xml(opf)
 
@@ -77,31 +78,31 @@ def epub_metadata(path):
         with path.open("rb") as stream:
             stream.seek(0, 2)
             if stream.tell() > EPUB_LIMIT:
-                raise MetadataError("EPUB trop volumineux pour l’extraction.")
+                raise MetadataError(msg("epub_trop_volumineux_pour_lextraction"))
             stream.seek(0)
             with zipfile.ZipFile(stream) as book:
                 _, package = epub_package(book)
                 return opf_fields(package)
     except (KeyError, zipfile.BadZipFile, EOFError, RuntimeError, zlib.error) as exc:
-        raise MetadataError(str(exc)) from exc
+        raise MetadataError(error_text(exc)) from exc
 
 
 def pdf_metadata(path):
     if PdfReader is None:
         return None
     if path.stat().st_size > PDF_LIMIT:
-        raise MetadataError("PDF trop volumineux pour l’extraction.")
+        raise MetadataError(msg("pdf_trop_volumineux_pour_lextraction"))
     with path.open("rb") as stream:
         data = stream.read(PDF_LIMIT + 1)
     if len(data) > PDF_LIMIT:
-        raise MetadataError("PDF trop volumineux pour l’extraction.")
+        raise MetadataError(msg("pdf_trop_volumineux_pour_lextraction"))
     with apply_configuration(xmp_maximum_input_length=XML_LIMIT, jbig2dec_binary=None):
         try:
             reader = PdfReader(io.BytesIO(data), strict=True, xref_stream_maximum_entries=250_000)
             if reader.is_encrypted:
                 return EMPTY
         except Exception as exc:
-            raise MetadataError(str(exc)) from exc
+            raise MetadataError(error_text(exc)) from exc
         try:
             info = reader.metadata
             title, author = (clean(info.title), clean(info.author)) if info else EMPTY
@@ -147,7 +148,7 @@ def companion_metadata(path, book_names):
     with path.open("rb") as stream:
         package = read_xml(stream)
     if package.tag not in ("package", f"{OPF}package"):
-        raise MetadataError("Paquet OPF introuvable.")
+        raise MetadataError(msg("paquet_opf_introuvable"))
     fields = opf_fields(package)
     references = explicit_names(package)
     stems = {name: normalized(Path(name).stem) for name in book_names}
@@ -189,11 +190,11 @@ def book_metadata(path, extension, size, modified, old, companion, errors, label
                 if native is None:  # PDF reader absent.
                     native = previous
             except OSError as exc:
-                errors.append(f"{label} — Métadonnées {extension.upper()} : {exc}")
+                errors.append(msg("metadata_error", path=label, format=extension.upper(), error=error_text(exc)))
                 native = previous
             except MetadataError as exc:
                 if extension == "epub":
-                    errors.append(f"{label} — Métadonnées EPUB : {exc}")
+                    errors.append(msg("metadata_error", path=label, format="EPUB", error=error_text(exc)))
 
     if companion is None:  # A previously associated OPF could not be checked.
         companion = stored_fields(old, "opf")

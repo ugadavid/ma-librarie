@@ -3,6 +3,8 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
+from .localized import Label
+from .i18n import join, msg
 from .covers import load_cover
 from .night import INK
 
@@ -30,16 +32,16 @@ class DetailPane(ttk.Frame):
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content, width=event.width))
         self.canvas = canvas
 
-        self.title = ttk.Label(panel, font="NightDetail", justify="left")
+        self.title = Label(panel, font="NightDetail", justify="left")
         self.title.pack(fill="x")
-        self.metadata = ttk.Label(panel, justify="left")
+        self.metadata = Label(panel, justify="left")
         self.metadata.pack(fill="x", pady=(6, 3))
         self.path = tk.StringVar(self)
         self.path_entry = ttk.Entry(panel, textvariable=self.path, state="readonly")
         self.path_entry.pack(fill="x", pady=(0, 8))
-        self.cover = ttk.Label(panel, anchor="center")
+        self.cover = Label(panel, anchor="center")
         self.cover.pack(fill="x")
-        self.cover_status = ttk.Label(panel, anchor="center", justify="center")
+        self.cover_status = Label(panel, anchor="center", justify="center")
         self.cover_status.pack(fill="x", pady=(4, 0))
         panel.bind("<Configure>", self.wrap, add="+")
         for widget in (canvas, panel, self.title, self.metadata, self.path_entry,
@@ -62,27 +64,27 @@ class DetailPane(ttk.Frame):
             self.key = key
             self.clear_cover()
             if books and row:
-                self.cover_status.configure(text="Chargement de la couverture…")
+                self.cover_status.configure(text=msg("chargement_de_la_couverture"))
                 self.debounce = self.after(90, self.enqueue, self.generation, dict(row))
         if row is None:
-            self.title.configure(text="Sélectionnez un résultat.")
+            self.title.configure(text=msg("selectionnez_un_resultat"))
             self.metadata.configure(text="")
             self.path.set("")
             return
         self.title.configure(text=row["title"] or row["name"])
         if work:
-            self.metadata.configure(text="\n".join([row["author"], *metadata]).strip())
+            self.metadata.configure(text=join("\n", filter(None, (row["author"], *metadata))))
             self.path_entry.pack_forget()
         else:
             lines = [
                 *metadata,
-                f'Nom : {row["name"]}',
-                f'Format : {row["extension"].upper() or "Sans extension"}',
-                f'Collections : {row["collection_names"]}',
-                f'État au dernier inventaire : {state}',
-                "Chemin complet",
+                msg("label_value", label=msg("nom"), value=row["name"]),
+                msg("label_value", label=msg("format"), value=row["extension"].upper() or msg("sans_extension")),
+                msg("label_value", label=msg("collections"), value=row["collection_names"]),
+                msg("last_scan_state", state=state),
+                msg("chemin_complet"),
             ]
-            self.metadata.configure(text="\n".join(lines))
+            self.metadata.configure(text=join("\n", lines))
             self.path_entry.pack(fill="x", pady=(0, 8), before=self.cover)
         self.path.set("" if work else row["full_path"])
 
@@ -116,7 +118,7 @@ class DetailPane(ttk.Frame):
             try:
                 data, message = load_cover(row)
             except Exception:
-                data, message = None, "Couverture indisponible pour ce fichier."
+                data, message = None, msg("couverture_indisponible_pour_ce_fichier")
             replies.put((generation, data, message))
 
         threading.Thread(target=work, daemon=True).start()
@@ -136,7 +138,7 @@ class DetailPane(ttk.Frame):
                     self.photo = tk.PhotoImage(master=self, data=data, format="png")
                     self.cover.configure(image=self.photo)
                 except tk.TclError:
-                    message = "Couverture illisible."
+                    message = msg("couverture_illisible")
             self.cover_status.configure(text=message)
         if self.pending is not None:
             self.start_cover()
